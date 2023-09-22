@@ -1,6 +1,6 @@
 (library
- (name lambda_lib)
- (public_name Lambda.Lib)
+ (name C_lib)
+ (public_name C.Lib)
  (modules Ast Lambda Interpret Parser Printast Pprintast utils)
  (modules_without_implementation ast)
  (libraries base angstrom)
@@ -12,7 +12,7 @@
 (library
  (name tests)
  (modules tests)
- (libraries lambda_lib)
+ (libraries C_lib)
  (preprocess
   (pps ppx_expect ppx_deriving.show))
  (instrumentation

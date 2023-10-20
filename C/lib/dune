@@ -1,9 +1,9 @@
 (library
  (name C_lib)
  (public_name C.Lib)
- (modules Ast Lambda Interpret Parser Printast Pprintast utils)
+ (modules Ast Lambda Interpret Parser Printast Pprintast utils astc)
  (modules_without_implementation ast)
- (libraries base angstrom)
+ (libraries base angstrom stdint)
  (preprocess
   (pps ppx_deriving.show))
  (instrumentation

@@ -12,6 +12,7 @@ bug-reports: "FIXME where to put bug reports about the code"
 depends: [
   "dune" {>= "3.7"}
   "angstrom"
+  "stdint"
   "ppx_inline_test" {with-test}
   "ppx_expect"
   "ppx_deriving"

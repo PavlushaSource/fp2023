@@ -1,20 +1,10 @@
 (library
  (name C_lib)
  (public_name C.Lib)
- (modules Ast Lambda Interpret Parser Printast Pprintast utils astc)
- (modules_without_implementation ast)
+ (modules Ast)
  (libraries base angstrom stdint)
  (preprocess
   (pps ppx_deriving.show))
  (instrumentation
   (backend bisect_ppx)))
 
-(library
- (name tests)
- (modules tests)
- (libraries C_lib)
- (preprocess
-  (pps ppx_expect ppx_deriving.show))
- (instrumentation
-  (backend bisect_ppx))
- (inline_tests))

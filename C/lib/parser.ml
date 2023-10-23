@@ -1,3 +1,7 @@
+(** Copyright 2021-2023, PavlushaSource *)
+
+(** SPDX-License-Identifier: LGPL-3.0-or-later *)
+
 open! Base
 open Ast
 open Angstrom
@@ -357,8 +361,8 @@ let parse_prog =
   >>= fun prog_ls -> return @@ My_programm prog_ls
 ;;
 
-
 let parse input = parse_string ~consume:All parse_prog input
+
 (*-----------------------------*)
 let%expect_test "parse_arith" =
   pp pp_expr parse_expr "malloc((double) 1 + 2, ++3, -(-5) * ((int) 6), {1, --2, ++3.5})";

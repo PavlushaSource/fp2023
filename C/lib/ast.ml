@@ -1,3 +1,7 @@
+(** Copyright 2021-2023, PavlushaSource *)
+
+(** SPDX-License-Identifier: LGPL-3.0-or-later *)
+
 open Stdint
 
 type name = string [@@deriving show { with_path = false }]

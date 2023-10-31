@@ -38,6 +38,8 @@ type bin_op =
   | GrowOrEqual
   | Or
   | And
+  | Lshift
+  | Rshift
 [@@deriving show { with_path = false }]
 
 type un_op =
@@ -77,14 +79,14 @@ and expr =
 [@@deriving show { with_path = false }]
 
 type statement =
-  | Var_decl of types * name * expr option (** int **b[1][2]; *)
+  | Var_decl of types * name * statement option (** int **b[1][2]; *)
   | Assign of expr * statement (** int n = b = 4*)
-  | AssignBin of bin_op * expr * statement (** int n = b += 4 *)
   | Expression of expr
   | Return of expr
   | Compound of statement list (** {n = 4; { n = 3;...} here n = 4 }*)
   | While of expr * statement
-  | For of statement option * expr option * expr option * statement (** for (init?; cond?; upd?) { expr list } *)
+  | For of statement option * expr option * expr option * statement
+      (** for (init?; cond?; upd?) { expr list } *)
   | If of expr * statement
   | If_else of expr * statement * statement
   | Break
@@ -95,5 +97,5 @@ and prog =
   | My_programm of prog list
   | Func_def of prog * statement
   | Func_decl of types * name * arg list
-  | Top_var_decl of types * name * expr option
+  | Top_var_decl of types * name * statement option
 [@@deriving show { with_path = false }]

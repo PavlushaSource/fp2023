@@ -83,10 +83,10 @@ type statement =
   | Assign of expr * statement (** int n = b = 4*)
   | Expression of expr
   | Return of expr
-  | Compound of statement list (** {n = 4; { n = 3;...} here n = 4 }*)
+  | Compound of statement list (** '\{' n = 4; '\{' n = 3;...'\}' here n = 4 '\}' *)
   | While of expr * statement
   | For of statement option * expr option * expr option * statement
-      (** for (init?; cond?; upd?) { expr list } *)
+      (** for (init?; cond?; upd?) '\{' expr list '\}' *)
   | If of expr * statement
   | If_else of expr * statement * statement
   | Break

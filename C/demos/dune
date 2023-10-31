@@ -16,4 +16,4 @@
 
 (cram
  (applies_to parsingTests)
- (deps ./demoFact.exe ./demoBinarySearch.exe))
+ (deps %{bin:demoFact} %{bin:demoBinarySearch}))

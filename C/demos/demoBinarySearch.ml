@@ -31,6 +31,7 @@ let () =
   |}
   in
   match Parser.parse s with
-  | Result.Ok ast -> Format.printf "%a\n" Ast.pp_prog ast
-  | Error _ -> Format.printf "Some error"
-;;
+  | Result.Ok ast ->
+      Format.printf "%a\n" Ast.pp_prog ast
+  | Error _ ->
+      Format.printf "Some error"

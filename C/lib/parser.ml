@@ -222,8 +222,8 @@ let p_un expr =
 
 let p_deref expr =
   fix (fun deref ->
-    token "*" *> (parens expr <|> p_index_array expr <|> var_name <|> deref)
-    >>= fun exp -> return @@ Unary_expr (Dereference, exp) )
+      token "*" *> (parens expr <|> p_index_array expr <|> var_name <|> deref)
+      >>= fun exp -> return @@ Unary_expr (Dereference, exp) )
 
 let p_address expr =
   (fun exp -> Unary_expr (Address, exp))
@@ -236,23 +236,23 @@ let p_not expr = token "!" *> expr >>= fun c -> return @@ Unary_expr (Not, c)
 
 let p_expr : expr t =
   fix (fun expr ->
-    let term =
-      choice
-        [parens expr; p_func_call expr; p_index_array expr; var_name; p_const]
-    in
-    let term = p_not term <|> term in
-    let term = p_cast term <|> term in
-    let term = p_address term <|> term in
-    let term = p_deref term <|> term in
-    let term = p_un term <|> term in
-    let term = chainl1 term (emul <|> emod <|> ediv) in
-    let term = chainl1 term (eadd <|> esub) in
-    let term = chainl1 term (ershft <|> elshift) in
-    let term = chainl1 term (elte <|> egte <|> el <|> eg <|> eeq <|> eneq) in
-    let term = chainr1 term eand in
-    let term = chainr1 term eor in
-    let term = fix (fun e -> term <|> p_elements_arr e) <|> term in
-    term )
+      let term =
+        choice
+          [parens expr; p_func_call expr; p_index_array expr; var_name; p_const]
+      in
+      let term = p_not term <|> term in
+      let term = p_cast term <|> term in
+      let term = p_address term <|> term in
+      let term = p_deref term <|> term in
+      let term = p_un term <|> term in
+      let term = chainl1 term (emul <|> emod <|> ediv) in
+      let term = chainl1 term (eadd <|> esub) in
+      let term = chainl1 term (ershft <|> elshift) in
+      let term = chainl1 term (elte <|> egte <|> el <|> eg <|> eeq <|> eneq) in
+      let term = chainr1 term eand in
+      let term = chainr1 term eor in
+      let term = fix (fun e -> term <|> p_elements_arr e) <|> term in
+      term )
 
 let%expect_test "type parse" =
   pp pp_types p_type "int32_t";
@@ -390,14 +390,14 @@ let p_var_decl =
   in
   let p_type_array t =
     fix (fun arr_type : types t ->
-      size_arr
-      >>= fun sz ->
-      whitespace *> peek_char
-      >>= function
-      | Some '[' ->
-          arr_type >>= fun t -> return @@ Array (Some sz, t)
-      | _ ->
-          return @@ Array (Some sz, t) )
+        size_arr
+        >>= fun sz ->
+        whitespace *> peek_char
+        >>= function
+        | Some '[' ->
+            arr_type >>= fun t -> return @@ Array (Some sz, t)
+        | _ ->
+            return @@ Array (Some sz, t) )
   in
   p_type
   >>= function
@@ -474,17 +474,17 @@ let p_for statements =
 
 let p_statements =
   fix (fun statements ->
-    choice
-      [ p_compound statements
-      ; p_if_else statements
-      ; p_if statements
-      ; p_while statements
-      ; p_for statements
-      ; p_assign
-      ; p_var_decl
-      ; p_continue
-      ; p_break
-      ; p_return ] )
+      choice
+        [ p_compound statements
+        ; p_if_else statements
+        ; p_if statements
+        ; p_while statements
+        ; p_for statements
+        ; p_assign
+        ; p_var_decl
+        ; p_continue
+        ; p_break
+        ; p_return ] )
 
 let p_func_decl statements =
   p_type

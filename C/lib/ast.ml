@@ -1,8 +1,6 @@
-(** Copyright 2021-2023, PavlushaSource *)
+(** Copyright 2021-2023, PavlushaSource, Kakadu *)
 
 (** SPDX-License-Identifier: LGPL-3.0-or-later *)
-
-open Stdint
 
 type name = string [@@deriving show {with_path= false}]
 
@@ -54,16 +52,10 @@ type un_op =
 
 type values =
   | V_int of int
-  | V_int32 of Int32.t
-  | V_int16
-  | V_int8
-  | V_uint32
-  | V_uint16
-  | V_uint8
   | V_char of char
   | V_float of float
-  | V_null
   | V_void
+  | V_null
 [@@deriving show {with_path= false}]
 
 type expr =
@@ -93,9 +85,9 @@ type statement =
   | Continue
 [@@deriving show {with_path= false}]
 
-type prog =
-  | My_programm of prog list
-  | Func_def of prog * statement
+type program_function =
+  | Func_def of program_function * statement
   | Func_decl of types * name * arg list
-  | Top_var_decl of types * name * statement option
 [@@deriving show {with_path= false}]
+
+type program = program_function list [@@deriving show {with_path= false}]

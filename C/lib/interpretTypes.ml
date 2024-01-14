@@ -5,7 +5,6 @@ open Ast
 let check_types_equality left right = left = right
 
 type value =
-  | I_Int of int32
   | I_Int32 of int32
   | I_Int16 of int16
   | I_Int8 of int8
@@ -13,6 +12,7 @@ type value =
   | I_Uint16 of uint16
   | I_Uint8 of uint8
   | I_Char of char
+  | I_Float of float
   | I_Bool of bool
   | I_Null
 
@@ -25,10 +25,11 @@ type error =
   | NotImplemented
   | ParsingFail
   | UnknownVariable of string
+  | DivisionByZero
 
 let pp_value fmt = function
-  | I_Int num ->
-      fprintf fmt "%s" @@ Int32.to_string num
+  | I_Float num ->
+      fprintf fmt "%s" @@ Float.to_string num
   | I_Int32 num ->
       fprintf fmt "%s" @@ Int32.to_string num
   | I_Int16 num ->
@@ -64,6 +65,8 @@ let pp_error fmt = function
       fprintf fmt "Parsing fail!"
   | UnknownVariable str ->
       fprintf fmt "Unknown variable with name - %s" str
+  | DivisionByZero ->
+      fprintf fmt "Division by zero!"
 
 type h_value =
   | H_explicit_var of string * value  (** format for variables which have name*)

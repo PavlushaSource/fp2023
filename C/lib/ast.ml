@@ -5,6 +5,7 @@
 type name = string [@@deriving show {with_path= false}]
 
 type types =
+  | ID_bool
   | ID_int
   | ID_int32
   | ID_int16
@@ -15,7 +16,6 @@ type types =
   | ID_char
   | ID_void
   | ID_float
-  | ID_double
   | Pointer of types
   | Array of int option * types
 [@@deriving show {with_path= false}]

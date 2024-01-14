@@ -28,7 +28,6 @@ let is_keywords = function
   | "return"
   | "char"
   | "const"
-  | "double"
   | "float"
   | "int"
   | "int32_t"

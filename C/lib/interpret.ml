@@ -29,145 +29,326 @@ type context =
   ; last_value: value
   ; return_flag: bool }
 
-module HEAP (M : MONAD_ERROR) = struct
-  open M
-  open InterpretTypes
-  open Ast
-
-  let get_type_size = function ID_int -> 4 | _ -> 1
-end
-
 module Interpret (M : MONAD_ERROR) = struct
   open M
 
-  open HEAP (M)
+  let shift_left x y = Base.Int32.shift_left x (Int32.to_int y)
 
-  (* let rec exec_arith bin_op expr1 expr2 =
-       let* val1 = arithmetics expr1 in
-       let* val2 = arithmetics expr2 in
-       match (bin_op, val1, val2) with
-       | Add, I_Int num1, I_Int num2 ->
-           return @@ I_Int (num1 + num2)
-       | Sub, I_Int num1, I_Int num2 ->
-           return @@ I_Int (num1 - num2)
-       | _ ->
-           fail ArithmeticsError
+  let shift_right x y = Base.Int32.shift_right x (Int32.to_int y)
 
-     and get_const value =
-       match value with
-       | V_int num ->
-           return @@ I_Int num
-       | V_char ch ->
-           return @@ I_Char ch
-       | _ ->
-           fail UndefinedTypesConst
-
-     and arithmetics expr =
-       match expr with
-       | Bin_expr (bin_op, expr1, expr2) ->
-           exec_arith bin_op expr1 expr2
-       | Const value ->
-           get_const value
-       | _ ->
-           fail Unreachable
-
-     and interpret_st_block sts_block =
-       match sts_block with
-       | Expression expr :: others ->
-           arithmetics expr
-       | _ ->
-           fail Unreachable
-
-     and exec_expression expr =
-
-     and exec_statements st =
-       match st with
-       | Expression expr :: others -> (match exec_expression expr with
-         | Ok _ -> exec_statements others
-         | Error err -> fail err
-         )
-       | _ -> fail "Not implemented"
-
-
-
-     and func_interpreter func =
-       match func with
-       | Func_def (Func_decl (return_type, name, args), body) -> (
-           match body with
-           | Compound sts -> (
-           exec_statements sts
-           >>= function
-           | Some ret_val ->
-               return ret_val
-           | None ->
-               if check_types_equality ID_void return_type then return @@ I_Int 0
-               else
-                 fail
-                 @@ ReturnTypeMismatch
-                      (name ^ "expected a return value, but nothing was returned"))
-           | _ -> fail @@ FuncHasNoBody (name ^ "has no body!")
-           )
-       | _ ->
-           fail Unreachable
-  *)
-
-  (* let rec exec_statement expr ctx =
-     match expr with
-     | Expression expr ->
-         let* ctx = exec_expression expr ctx in
-         return ctx
-     | _ ->
-         fail NotImplemented *)
-
-  (* let define_return_type expected_type return_val =
-     match (expected_type, return_val) with ID_int, I_Int -> true | _ -> false *)
-
-  let take_var name var_map = 
+  let take_var name var_map =
     match StringMap.find_opt name var_map with
-    | Some var -> return var
-    | None -> fail @@ UnknownVariable name
+    | Some var ->
+        return var
+    | None ->
+        fail @@ UnknownVariable name
 
-  let const_for_value (ctx : context) = function
+  let const_for_value ctx = function
     | V_int x ->
-        return (I_Int32 (Int32.of_int x), ctx)
+        return (ID_int32, I_Int32 (Int32.of_int x), ctx)
+    | V_char x ->
+        return (ID_char, I_Char x, ctx)
+    | V_float x ->
+        return (ID_float, I_Float x, ctx)
     | _ ->
         fail UndefinedTypesConst
 
-  let rec exec_bin_op expr1 expr2 bin_op ctx =
-    let* val1, ctx = exec_expression expr1 ctx in
-    let* val2, ctx = exec_expression expr2 ctx in
-    match (bin_op, val1, val2) with
-    | Add, I_Int32 x, I_Int32 y ->
-        return (I_Int32 (Stdint.Int32.( + ) x y), ctx)
+  let rec cast_val old_val new_type =
+    match (old_val, new_type) with
+    | I_Float x, ID_float ->
+        return (I_Float x)
+    | I_Float x, ID_uint32 ->
+        return (I_Uint32 (Uint32.of_float x))
+    | I_Float x, ID_int32 ->
+        return (I_Int32 (Int32.of_float x))
+    | I_Float x, ID_uint16 ->
+        return (I_Uint16 (Uint16.of_float x))
+    | I_Float x, ID_int16 ->
+        return (I_Int16 (Int16.of_float x))
+    | I_Float x, ID_uint8 ->
+        return (I_Uint8 (Uint8.of_float x))
+    | I_Float x, ID_int8 ->
+        return (I_Int8 (Int8.of_float x))
+    | I_Float x, ID_char ->
+        let new_x = Float.to_int x in
+        if new_x <= 255 && new_x >= 0 then
+          return (I_Char (Base.Char.of_int_exn new_x))
+        else
+          fail
+          @@ ReturnTypeMismatch
+               "Trying to convert int number not in char boundaries in char"
+    | I_Float x, ID_bool ->
+        return (I_Bool (if x = Int.to_float 0 then false else true))
+    | I_Uint32 x, ID_float ->
+        return (I_Float (Uint32.to_float x))
+    | I_Int32 x, ID_float ->
+        return (I_Float (Int32.to_float x))
+    | I_Uint16 x, ID_float ->
+        return (I_Float (Uint16.to_float x))
+    | I_Int16 x, ID_float ->
+        return (I_Float (Int16.to_float x))
+    | I_Uint8 x, ID_float ->
+        return (I_Float (Uint8.to_float x))
+    | I_Int8 x, ID_float ->
+        return (I_Float (Int8.to_float x))
+    | I_Char x, ID_float ->
+        return (I_Float (Int.to_float (Char.code x)))
+    | I_Bool x, ID_float ->
+        return (I_Float (Bool.to_float x))
+    | I_Uint32 x, ID_uint32 ->
+        return (I_Uint32 x)
+    | I_Uint32 x, ID_int32 ->
+        return (I_Int32 (Int32.of_uint32 x))
+    | I_Uint32 x, ID_uint16 ->
+        return (I_Uint16 (Uint16.of_uint32 x))
+    | I_Uint32 x, ID_int16 ->
+        return (I_Int16 (Int16.of_uint32 x))
+    | I_Uint32 x, ID_uint8 ->
+        return (I_Uint8 (Uint8.of_uint32 x))
+    | I_Uint32 x, ID_int8 ->
+        return (I_Int8 (Int8.of_uint32 x))
+    | I_Uint32 x, ID_char ->
+        let new_x = Uint32.to_int x in
+        if new_x <= 255 && new_x >= 0 then
+          return (I_Char (Base.Char.of_int_exn new_x))
+        else
+          fail
+          @@ ReturnTypeMismatch
+               "Trying to convert int number not in char boundaries in char"
+    | I_Uint32 x, ID_bool ->
+        return (I_Bool (if Uint32.to_int x = 0 then false else true))
+    | I_Int32 x, _ ->
+        cast_val (I_Uint32 (Uint32.of_int32 x)) new_type
+    | I_Uint16 x, _ ->
+        cast_val (I_Uint32 (Uint32.of_uint16 x)) new_type
+    | I_Int16 x, _ ->
+        cast_val (I_Uint32 (Uint32.of_int16 x)) new_type
+    | I_Uint8 x, _ ->
+        cast_val (I_Uint32 (Uint32.of_uint8 x)) new_type
+    | I_Int8 x, _ ->
+        cast_val (I_Uint32 (Uint32.of_int8 x)) new_type
+    | I_Char x, _ ->
+        cast_val (I_Uint32 (Uint32.of_int (Char.code x))) new_type
+    | I_Bool x, _ ->
+        cast_val (I_Uint32 (Uint32.of_int (Bool.to_int x))) new_type
     | _ ->
-        fail NotImplemented
+        fail @@ ReturnTypeMismatch "Not supported type to cast"
 
-  and exec_expression expr ctx : (value * context, error) t =
+  let relevant_type t1 t2 =
+    match (t1, t2) with
+    | ID_float, _ | _, ID_float ->
+        return ID_float
+    | ID_uint32, _ | _, ID_uint32 ->
+        return ID_uint32
+    | ID_int32, _ | _, ID_int32 ->
+        return ID_int32
+    | ID_int, _ | _, ID_int ->
+        return ID_int32
+    | ID_uint16, _ | _, ID_uint16 ->
+        return ID_uint16
+    | ID_int16, _ | _, ID_int16 ->
+        return ID_int16
+    | ID_uint8, _ | _, ID_uint8 ->
+        return ID_uint8
+    | ID_int8, _ | _, ID_int8 ->
+        return ID_int8
+    | ID_char, _ | _, ID_char ->
+        return ID_char
+    | ID_bool, _ | _, ID_bool ->
+        return ID_bool
+    | _ ->
+        fail
+        @@ ReturnTypeMismatch
+             "It is impossible to compare this type with anything"
+
+  let exec_int_arith_op value1 value2 op =
+    let* x = cast_val value1 ID_int32 in
+    let* y = cast_val value2 ID_int32 in
+    match (x, y) with
+    | I_Int32 x, I_Int32 y ->
+        return (I_Int32 (op x y))
+    | _ ->
+        fail Unreachable
+
+  let exec_float_arith_op value1 value2 op =
+    let* x = cast_val value1 ID_float in
+    let* y = cast_val value2 ID_float in
+    match (x, y) with
+    | I_Float x, I_Float y ->
+        return (I_Float (op x y))
+    | _ ->
+        fail Unreachable
+
+  let exec_int_logical_op value1 value2 op =
+    match (value1, value2) with
+    | I_Int32 x, I_Int32 y ->
+        return (I_Bool (op x y))
+    | _ ->
+        fail Unreachable
+
+  let exec_float_logical_op value1 value2 op =
+    match (value1, value2) with
+    | I_Float x, I_Float y ->
+        return (I_Bool (op x y))
+    | _ ->
+        fail Unreachable
+
+  let check_zero x =
+    match x with
+    | I_Float x when not (x = Int.to_float 0) ->
+        return false
+    | _ -> (
+        let* x = cast_val x ID_int32 in
+        match x with I_Int32 x when x = 0l -> return true | _ -> return false )
+
+  let rec exec_bin_op expr1 expr2 bin_op ctx =
+    let* val1_type, val1, ctx = exec_expression expr1 ctx in
+    match (bin_op, val1) with
+    | And, I_Bool false ->
+        return (ID_bool, I_Bool false, ctx)
+    | Or, I_Bool true ->
+        return (ID_bool, I_Bool true, ctx)
+    | _ ->
+        let* val2_type, val2, ctx = exec_expression expr2 ctx in
+        let* res =
+          match (bin_op, val1, val2) with
+          | Add, x, y -> (
+            match (val1_type, val2_type) with
+            | ID_float, _ | _, ID_float ->
+                exec_float_arith_op val1 val2 Base.Float.( + )
+            | _ ->
+                exec_int_arith_op x y Base.Int32.( + ) )
+          | Sub, x, y -> (
+            match (val1_type, val2_type) with
+            | ID_float, _ | _, ID_float ->
+                exec_float_arith_op val1 val2 Base.Float.( - )
+            | _ ->
+                exec_int_arith_op x y Base.Int32.( - ) )
+          | Mul, x, y -> (
+            match (val1_type, val2_type) with
+            | ID_float, _ | _, ID_float ->
+                exec_float_arith_op val1 val2 Base.Float.( * )
+            | _ ->
+                exec_int_arith_op x y Base.Int32.( * ) )
+          | Div, x, y ->
+              let* zero_exist = check_zero y in
+              if not zero_exist then
+                match (val1_type, val2_type) with
+                | ID_float, _ | _, ID_float ->
+                    exec_float_arith_op val1 val2 Base.Float.( / )
+                | _ ->
+                    exec_int_arith_op x y Base.Int32.( / )
+              else fail DivisionByZero
+          | Mod, x, y ->
+              let* zero_exist = check_zero y in
+              if not zero_exist then
+                match (val1_type, val2_type) with
+                | ID_float, _ | _, ID_float ->
+                    exec_float_arith_op val1 val2 Base.Float.( % )
+                | _ ->
+                    exec_int_arith_op x y Base.Int32.( % )
+              else fail DivisionByZero
+          | Lshift, x, y -> (
+            match (val1_type, val2_type) with
+            | ID_float, _ | _, ID_float ->
+                fail ArithmeticsError
+            | _ ->
+                exec_int_arith_op x y shift_left )
+          | Rshift, x, y -> (
+            match (val1_type, val2_type) with
+            | ID_float, _ | _, ID_float ->
+                fail ArithmeticsError
+            | _ ->
+                exec_int_arith_op x y shift_right )
+          | Less, x, y -> (
+            match (val1_type, val2_type) with
+            | ID_float, _ | _, ID_float ->
+                exec_float_logical_op x y Base.Float.( < )
+            | _ ->
+                exec_int_logical_op x y Base.Int32.( < ) )
+          | LessOrEqual, x, y -> (
+            match (val1_type, val2_type) with
+            | ID_float, _ | _, ID_float ->
+                exec_float_logical_op x y Base.Float.( <= )
+            | _ ->
+                exec_int_logical_op x y Base.Int32.( <= ) )
+          | Grow, x, y -> (
+            match (val1_type, val2_type) with
+            | ID_float, _ | _, ID_float ->
+                exec_float_logical_op x y Base.Float.( > )
+            | _ ->
+                exec_int_logical_op x y Base.Int32.( > ) )
+          | GrowOrEqual, x, y -> (
+            match (val1_type, val2_type) with
+            | ID_float, _ | _, ID_float ->
+                exec_float_logical_op x y Base.Float.( >= )
+            | _ ->
+                exec_int_logical_op x y Base.Int32.( >= ) )
+          | Equal, x, y -> (
+            match (val1_type, val2_type) with
+            | ID_float, _ | _, ID_float ->
+                exec_float_logical_op x y Base.Float.( = )
+            | _ ->
+                exec_int_logical_op x y Base.Int32.( = ) )
+          | NotEqual, x, y -> (
+            match (val1_type, val2_type) with
+            | ID_float, _ | _, ID_float ->
+                exec_float_logical_op x y Base.Float.( <> )
+            | _ ->
+                exec_int_logical_op x y Base.Int32.( <> ) )
+          | Or, _, y -> (
+              let* y = cast_val y ID_int32 in
+              match y with
+              | I_Int32 y when y = 0l ->
+                  return (I_Bool true)
+              | _ ->
+                  return (I_Bool false) )
+          | And, _, y -> (
+              let* y = cast_val y ID_int32 in
+              match y with
+              | I_Int32 y when y = 1l ->
+                  return (I_Bool true)
+              | _ ->
+                  return (I_Bool false) )
+        in
+        let* necessary_type = relevant_type val1_type val2_type in
+        let* return_val = cast_val res necessary_type in
+        return (necessary_type, return_val, ctx)
+
+  (* | Sub, x, y ->
+     let* res = exec_bin_op' x y Base.Int32.( - ) in
+     let* grow_type = change_grow_type val1_type val2_type in
+     let* return_val = cast_val res grow_type in
+     return (grow_type, return_val, ctx) *)
+
+  and exec_expression expr ctx : (types * value * context, error) t =
     match expr with
     | Bin_expr (bin_op, expr1, expr2) ->
         exec_bin_op expr1 expr2 bin_op ctx
     | Const x ->
         const_for_value ctx x
     | Var_name name -> (
-      let* variable = take_var name ctx.var_map in
-      match variable with
-      | { var_type = _; var_value = Some v; var_addr = -1 } -> return (v, ctx)
-      | _ -> fail NotImplemented)
+        let* variable = take_var name ctx.var_map in
+        match variable with
+        | {var_type= t; var_value= Some v; var_addr= -1} ->
+            return (t, v, ctx)
+        | _ ->
+            fail NotImplemented )
     | _ ->
         fail NotImplemented
 
   and exec_declaration var_t var_name sts ctx =
     match sts with
     | Some (Expression x) ->
-        let* return_value, ctx = exec_expression x ctx in
+        let* return_type, return_value, ctx = exec_expression x ctx in
         return
           { ctx with
             var_map=
               StringMap.add var_name
                 { var_type= var_t
                 ; var_value= Option.some return_value
-                ; var_addr= -1 } 
-                ctx.var_map}
+                ; var_addr= -1 }
+                ctx.var_map }
     | _ ->
         fail NotImplemented
 
@@ -176,7 +357,7 @@ module Interpret (M : MONAD_ERROR) = struct
     | Var_decl (var_type, name, sts) ->
         exec_declaration var_type name sts ctx
     | Return expr ->
-        let* return_value, ctx = exec_expression expr ctx in
+        let* return_type, return_value, ctx = exec_expression expr ctx in
         return {ctx with last_value= return_value; return_flag= true}
     | _ ->
         fail NotImplemented
@@ -257,10 +438,8 @@ let%expect_test _ =
     parse_and_run
       {|
       int main() {
-        int dima = 5 + 6;
-        int grisha = 20 + 32;
-        return dima + grisha;
+        return 'a' + 10 + 3.;
       }
       |}
   in
-  [%expect {| 10 |}]
+  [%expect {| 110. |}]

@@ -134,6 +134,17 @@ module Interpret (M : MONAD_ERROR) = struct
     | _ ->
         fail @@ ReturnTypeMismatch "Not supported type to cast"
 
+  let find_necessary_func name func_list =
+    let rec func_name = function
+      | Func_def (fDecl, _) ->
+          func_name fDecl
+      | Func_decl (_, func_name, _) ->
+          func_name
+    in
+    Stdlib.List.find_opt
+      (fun func -> String.equal (func_name func) name)
+      func_list
+
   let relevant_type t1 t2 =
     match (t1, t2) with
     | ID_float, _ | _, ID_float ->
@@ -192,6 +203,12 @@ module Interpret (M : MONAD_ERROR) = struct
         return (I_Bool (op x y))
     | _ ->
         fail Unreachable
+
+  let get_type_func = function
+    | Func_def (Func_decl (return_type, _, _), _) ->
+        return_type
+    | _ ->
+        failwith "It is impossible to determine the type of function"
 
   let check_zero x =
     match x with
@@ -327,6 +344,49 @@ module Interpret (M : MONAD_ERROR) = struct
         exec_bin_op expr1 expr2 bin_op ctx
     | Const x ->
         const_for_value ctx x
+    | Func_call (func_name, func_args) -> (
+        let rec get_name_args arg_list =
+          match arg_list with
+          | hd :: tail -> (
+            match hd with Arg (_, n) -> n :: get_name_args tail )
+          | [] ->
+              []
+        in
+        match find_necessary_func func_name ctx.functions with
+        | Some func_finded -> (
+          match func_finded with
+          | Func_def (Func_decl (return_type, func_name, args), _) ->
+              let* ctx' =
+                List.fold_left2
+                  (fun ctx' argument expr ->
+                    let* ctx' = ctx' in
+                    let* ctx' =
+                      match argument with
+                      | Arg (t, n) ->
+                          exec_declaration t n (Some (Expression expr)) ctx'
+                    in
+                    return ctx' )
+                  (return {ctx with func_name; return_type})
+                  args func_args
+              in
+              let arg_names = get_name_args args in
+              let ctx' =
+                { ctx' with
+                  var_map=
+                    StringMap.filter
+                      (fun name _ ->
+                        List.exists (fun arg_name -> arg_name = name) arg_names
+                        )
+                      ctx'.var_map }
+              in
+              let* ret_val, ctx' = exec_function func_finded (return ctx') in
+              return (return_type, ret_val, ctx')
+          | _ ->
+              fail Unreachable )
+        | None ->
+            fail
+              (UnknownVariable
+                 ("Call undefined function with name - " ^ func_name) ) )
     | Var_name name -> (
         let* variable = take_var name ctx.var_map in
         match variable with
@@ -337,10 +397,11 @@ module Interpret (M : MONAD_ERROR) = struct
     | _ ->
         fail NotImplemented
 
-  and exec_declaration var_t var_name sts ctx =
+  and exec_declaration var_t var_name sts (ctx : context) =
     match sts with
     | Some (Expression x) ->
         let* return_type, return_value, ctx = exec_expression x ctx in
+        let* return_value = cast_val return_value var_t in
         return
           { ctx with
             var_map=
@@ -352,7 +413,7 @@ module Interpret (M : MONAD_ERROR) = struct
     | _ ->
         fail NotImplemented
 
-  let exec_statement (st : statement) (ctx : context) : (context, error) t =
+  and exec_statement (st : statement) (ctx : context) : (context, error) t =
     match st with
     | Var_decl (var_type, name, sts) ->
         exec_declaration var_type name sts ctx
@@ -362,42 +423,29 @@ module Interpret (M : MONAD_ERROR) = struct
     | _ ->
         fail NotImplemented
 
-  let get_type_func = function
-    | Func_def (Func_decl (return_type, _, _), _) ->
-        return_type
-    | _ ->
-        failwith "It is impossible to determine the type of function"
-
-  let exec_function func (ctx : (context, error) t) =
+  and exec_function func ctx =
     match func with
     | Func_def (Func_decl (return_type, func_name, args), body) -> (
       match body with
       | Compound sts ->
-          List.fold_left
-            (fun ctx st ->
-              let* ctx = ctx in
-              if ctx.return_flag = true then return ctx
-              else
-                let* ctx = exec_statement st ctx in
-                return ctx )
-            ctx sts
+          let* ctx =
+            List.fold_left
+              (fun ctx st ->
+                let* ctx = ctx in
+                if ctx.return_flag = true then return ctx
+                else
+                  let* ctx = exec_statement st ctx in
+                  return ctx )
+              ctx sts
+          in
+          return (ctx.last_value, ctx)
       | _ ->
           fail Unreachable )
     | _ ->
         fail Unreachable
 
   let exec_program (program : program_function list) =
-    let rec func_name = function
-      | Func_def (fDecl, _) ->
-          func_name fDecl
-      | Func_decl (_, func_name, _) ->
-          func_name
-    in
-    match
-      Stdlib.List.find_opt
-        (fun func -> String.equal (func_name func) "main")
-        program
-    with
+    match find_necessary_func "main" program with
     | Some func ->
         exec_function func
           (return
@@ -426,8 +474,8 @@ let parse_and_run str =
   match Parser.parse str with
   | Ok parse_result -> (
     match InterpreterResult.exec_program parse_result with
-    | Ok ctx ->
-        printf "%a" InterpretTypes.pp_value ctx.last_value
+    | Ok (value, ctx) ->
+        printf "%a" InterpretTypes.pp_value value
     | Error err ->
         printf "%a" InterpretTypes.pp_error err )
   | Error _ ->
@@ -437,9 +485,28 @@ let%expect_test _ =
   let _ =
     parse_and_run
       {|
+
+      int sum(int x, int y) {
+        return x + y;
+      }
+      
       int main() {
-        return 'a' + 10 + 3.;
+        int x = 30;
+        int nastya = 20;
+        return sum (x + 10, nastya * 20 << 1);
       }
       |}
   in
-  [%expect {| 110. |}]
+  [%expect {| 840 |}]
+
+let%expect_test _ =
+  let _ =
+    parse_and_run
+      {|
+      int main() {
+        uint32_t x = 30;
+        return x;
+      }
+      |}
+  in
+  [%expect {| 30 |}]

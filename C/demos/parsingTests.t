@@ -1,5 +1,5 @@
   $ dune exec demoFact
-  [(Func_def ((Func_decl (ID_int, "factorial", [(Arg (ID_int, "n"))])),
+  [(Func_def ((Func_decl (ID_int32, "factorial", [(Arg (ID_int32, "n"))])),
       (Compound
          [(If_else (
              (Bin_expr (GrowOrEqual, (Var_name "n"), (Const (V_int 1)))),
@@ -14,26 +14,26 @@
              (Compound [(Return (Const (V_int 1)))])))
            ])
       ));
-    (Func_def ((Func_decl (ID_int, "main", [])),
+    (Func_def ((Func_decl (ID_int32, "main", [])),
        (Compound
-          [(Var_decl (ID_int, "n", (Some (Expression (Const (V_int 5))))));
+          [(Var_decl (ID_int32, "n", (Some (Expression (Const (V_int 5))))));
             (Return (Func_call ("factorial", [(Var_name "n")])))])
        ))
     ]
 
   $ dune exec demoBinarySearch
   [(Func_def (
-      (Func_decl (ID_int, "binarySearch",
-         [(Arg (ID_int, "a")); (Arg ((Pointer ID_int), "array"));
-           (Arg (ID_int, "n"))]
+      (Func_decl (ID_int32, "binarySearch",
+         [(Arg (ID_int32, "a")); (Arg ((Pointer ID_int32), "array"));
+           (Arg (ID_int32, "n"))]
          )),
       (Compound
-         [(Var_decl (ID_int, "low", (Some (Expression (Const (V_int 0))))));
-           (Var_decl (ID_int, "high",
+         [(Var_decl (ID_int32, "low", (Some (Expression (Const (V_int 0))))));
+           (Var_decl (ID_int32, "high",
               (Some (Expression
                        (Bin_expr (Sub, (Var_name "n"), (Const (V_int 1))))))
               ));
-           (Var_decl (ID_int, "middle", None));
+           (Var_decl (ID_int32, "middle", None));
            (While (
               (Bin_expr (LessOrEqual, (Var_name "low"), (Var_name "high"))),
               (Compound
@@ -78,9 +78,9 @@
               ));
            (Return (Unary_expr (Minus, (Const (V_int 1)))))])
       ));
-    (Func_def ((Func_decl (ID_int, "main", [])),
+    (Func_def ((Func_decl (ID_int32, "main", [])),
        (Compound
-          [(Var_decl ((Array ((Some 5), ID_int)), "array",
+          [(Var_decl ((Array ((Some 5), ID_int32)), "array",
               (Some (Expression
                        (Array_value
                           [(Const (V_int 3)); (Const (V_int 7));

@@ -485,7 +485,7 @@ let p_statements =
         ; p_break
         ; p_return ] )
 
-let p_func_decl statements =
+let p_func_decl statements : func_decl t =
   p_type
   >>= fun t ->
   whitespace *> p_ident <* whitespace
@@ -497,17 +497,40 @@ let p_func_decl statements =
   >>= function
   | Some '{' ->
       p_compound statements
-      >>= fun cmd -> return @@ Func_def (Func_decl (t, id, argls), cmd)
+      >>= fun cmd -> return @@ Func_decl (t, id, argls, cmd)
   | Some ';' ->
-      advance 1 >>= fun _ -> return @@ Func_decl (t, id, argls)
+      advance 1 >>= fun _ -> fail "Function defenitions is not supported"
   | _ ->
-      fail "ERROR func decl"
+      fail "Wrong function declaration or defenition"
 
 let p_programm : program t =
   whitespace *> sep_by whitespace (p_func_decl p_statements)
   >>= fun prog_ls -> return @@ prog_ls
 
 let parse input = parse_string ~consume:All p_programm input
+
+let%expect_test "binary search" =
+  pp pp_program p_programm
+    {|
+      int main() {
+        int32_t d = 20;
+        int32_t a = 10;
+        int* b = &a;
+        
+        return *b;
+      }
+      |};
+  [%expect
+    {|
+      [(Func_decl (ID_int32, "main", [],
+          (Compound
+             [(Var_decl (ID_int32, "d", (Some (Expression (Const (V_int 20))))));
+               (Var_decl (ID_int32, "a", (Some (Expression (Const (V_int 10))))));
+               (Var_decl ((Pointer ID_int32), "b",
+                  (Some (Expression (Unary_expr (Address, (Var_name "a")))))));
+               (Return (Unary_expr (Dereference, (Var_name "b"))))])
+          ))
+        ] |}]
 
 let%expect_test "binary search" =
   pp pp_program p_programm
@@ -540,11 +563,9 @@ let%expect_test "binary search" =
     |};
   [%expect
     {|
-    [(Func_def (
-        (Func_decl (ID_int32, "binarySearch",
-           [(Arg (ID_int32, "a")); (Arg ((Pointer ID_int32), "array"));
-             (Arg (ID_int32, "n"))]
-           )),
+    [(Func_decl (ID_int32, "binarySearch",
+        [(Arg (ID_int32, "a")); (Arg ((Pointer ID_int32), "array"));
+          (Arg (ID_int32, "n"))],
         (Compound
            [(Var_decl (ID_int32, "low", (Some (Expression (Const (V_int 0))))));
              (Var_decl (ID_int32, "high",
@@ -596,7 +617,7 @@ let%expect_test "binary search" =
                 ));
              (Return (Unary_expr (Minus, (Const (V_int 1)))))])
         ));
-      (Func_def ((Func_decl (ID_int32, "main", [])),
+      (Func_decl (ID_int32, "main", [],
          (Compound
             [(Var_decl ((Array ((Some 5), ID_int32)), "array",
                 (Some (Expression
@@ -632,7 +653,7 @@ let%expect_test "factorial" =
     |};
   [%expect
     {|
-    [(Func_def ((Func_decl (ID_int32, "factorial", [(Arg (ID_int32, "n"))])),
+    [(Func_decl (ID_int32, "factorial", [(Arg (ID_int32, "n"))],
         (Compound
            [(If_else (
                (Bin_expr (GrowOrEqual, (Var_name "n"), (Const (V_int 1)))),
@@ -647,7 +668,7 @@ let%expect_test "factorial" =
                (Compound [(Return (Const (V_int 1)))])))
              ])
         ));
-      (Func_def ((Func_decl (ID_int32, "main", [])),
+      (Func_decl (ID_int32, "main", [],
          (Compound
             [(Var_decl (ID_int32, "n", (Some (Expression (Const (V_int 5))))));
               (Return (Func_call ("factorial", [(Var_name "n")])))])

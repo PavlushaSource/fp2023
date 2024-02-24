@@ -6,7 +6,6 @@ type name = string [@@deriving show {with_path= false}]
 
 type types =
   | ID_bool
-  | ID_int
   | ID_int32
   | ID_int16
   | ID_int8
@@ -85,9 +84,7 @@ type statement =
   | Continue
 [@@deriving show {with_path= false}]
 
-type program_function =
-  | Func_def of program_function * statement
-  | Func_decl of types * name * arg list
+type func_decl = Func_decl of types * name * arg list * statement
 [@@deriving show {with_path= false}]
 
-type program = program_function list [@@deriving show {with_path= false}]
+type program = func_decl list [@@deriving show {with_path= false}]

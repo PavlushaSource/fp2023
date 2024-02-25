@@ -233,7 +233,7 @@ let p_cast expr =
 
 let p_not expr = token "!" *> expr >>= fun c -> return @@ Unary_expr (Not, c)
 
-let p_expr : expr t =
+let p_expr =
   fix (fun expr ->
       let term =
         choice
@@ -351,17 +351,13 @@ let p_compound statements =
   <* token "}"
   >>= fun s -> whitespace *> (return @@ Compound s)
 
-let p_if statements =
-  token "if" *> parens p_expr
-  >>= fun cnd -> p_compound statements >>= fun cmpd -> return @@ If (cnd, cmpd)
-
 let p_if_else statements =
   token "if" *> parens p_expr
   >>= fun cnd ->
   p_compound statements
-  >>= fun cmd_if ->
-  token "else" *> p_compound statements
-  >>= fun cmd_else -> return @@ If_else (cnd, cmd_if, cmd_else)
+  >>= fun cmd_if -> (
+  (token "else" *> p_compound statements
+  >>= fun cmd_else -> return @@ If_else (cnd, cmd_if, Some cmd_else)) <|> return @@ If_else (cnd, cmd_if, None))
 
 let rec p_mult_assign expr1 =
   token "=" *> p_expr
@@ -459,6 +455,14 @@ let p_assign =
   peek_char
   >>= function Some '=' -> p_mult_assign exp1 | _ -> fail "Error assign"
 
+let p_func_call_with_st =
+  let* expr = p_expr in
+  match expr with
+  | Func_call _ ->
+      token ";" *> return (Expression expr)
+  | _ ->
+      fail "Error func_call"
+
 let p_for statements =
   token "for" *> token "("
   *> (p_var_decl <|> p_assign >>| Option.some <|> (return None <* token ";"))
@@ -476,11 +480,11 @@ let p_statements =
       choice
         [ p_compound statements
         ; p_if_else statements
-        ; p_if statements
         ; p_while statements
         ; p_for statements
         ; p_assign
         ; p_var_decl
+        ; p_func_call_with_st
         ; p_continue
         ; p_break
         ; p_return ] )
@@ -499,7 +503,7 @@ let p_func_decl statements : func_decl t =
       p_compound statements
       >>= fun cmd -> return @@ Func_decl (t, id, argls, cmd)
   | Some ';' ->
-      advance 1 >>= fun _ -> fail "Function defenitions is not supported"
+      advance 1 >>= fun _ -> fail "Function definitions is not supported"
   | _ ->
       fail "Wrong function declaration or defenition"
 
@@ -516,7 +520,6 @@ let%expect_test "binary search" =
         int32_t d = 20;
         int32_t a = 10;
         int* b = &a;
-        
         return *b;
       }
       |};
@@ -603,16 +606,17 @@ let%expect_test "binary search" =
                                             (Const (V_int 1)))))
                                       ))
                                     ]),
-                               (Compound
-                                  [(Assign ((Var_name "low"),
-                                      (Expression
-                                         (Bin_expr (Add, (Var_name "middle"),
-                                            (Const (V_int 1)))))
-                                      ))
-                                    ])
+                               (Some (Compound
+                                        [(Assign ((Var_name "low"),
+                                            (Expression
+                                               (Bin_expr (Add,
+                                                  (Var_name "middle"),
+                                                  (Const (V_int 1)))))
+                                            ))
+                                          ]))
                                ))
                              ]),
-                        (Compound [(Return (Var_name "middle"))])))
+                        (Some (Compound [(Return (Var_name "middle"))]))))
                      ])
                 ));
              (Return (Unary_expr (Minus, (Const (V_int 1)))))])
@@ -640,9 +644,7 @@ let%expect_test "factorial" =
       if (n >= 1) {
         return n * factorial(n - 1);
       }
-      else {
-        return 1;
-      }
+      return 1;
     }
       
     int main() {
@@ -665,8 +667,8 @@ let%expect_test "factorial" =
                             ))
                          )))
                     ]),
-               (Compound [(Return (Const (V_int 1)))])))
-             ])
+               None));
+             (Return (Const (V_int 1)))])
         ));
       (Func_decl (ID_int32, "main", [],
          (Compound

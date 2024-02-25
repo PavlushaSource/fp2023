@@ -11,7 +11,7 @@
                           ))
                        )))
                   ]),
-             (Compound [(Return (Const (V_int 1)))])))
+             (Some (Compound [(Return (Const (V_int 1)))]))))
            ])
       ));
     (Func_decl (ID_int32, "main", [],
@@ -62,16 +62,17 @@
                                           (Const (V_int 1)))))
                                     ))
                                   ]),
-                             (Compound
-                                [(Assign ((Var_name "low"),
-                                    (Expression
-                                       (Bin_expr (Add, (Var_name "middle"),
-                                          (Const (V_int 1)))))
-                                    ))
-                                  ])
+                             (Some (Compound
+                                      [(Assign ((Var_name "low"),
+                                          (Expression
+                                             (Bin_expr (Add,
+                                                (Var_name "middle"),
+                                                (Const (V_int 1)))))
+                                          ))
+                                        ]))
                              ))
                            ]),
-                      (Compound [(Return (Var_name "middle"))])))
+                      (Some (Compound [(Return (Var_name "middle"))]))))
                    ])
               ));
            (Return (Unary_expr (Minus, (Const (V_int 1)))))])

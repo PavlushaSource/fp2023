@@ -63,6 +63,8 @@ module Interpret (M : MONAD_ERROR) = struct
 
   let rec cast_val old_val new_type =
     match (old_val, new_type) with
+    | value, Pointer _ ->
+        cast_val value ID_int32
     | I_Int32 x, ID_int32 ->
         return (I_Int32 x)
     | I_Int32 x, ID_int16 ->
@@ -291,26 +293,37 @@ module Interpret (M : MONAD_ERROR) = struct
             fail Unreachable )
     | Index _ ->
         fail NotImplemented
-    | Func_call (func_name, func_args) -> (
+    | Func_call (func_name, func_param) -> (
       match find_necessary_func func_name ctx.functions_list with
-      | Some Func_decl(return_type, func_name, args, sts) -> (
-        
-      )
+      | Some func_finded -> (
+        match func_finded with
+        | Func_decl (return_type, func_name, args, sts) ->
+            if List.length func_param <> List.length args then
+              fail
+                (InvalidFunctionCall
+                   "The function call does not match its signature" )
+            else
+              let* ctx' =
+                List.fold_left2
+                  (fun ctx' argument expr ->
+                    let* ctx' = ctx' in
+                    let* ctx' =
+                      match argument with
+                      | Arg (t, n) ->
+                          exec_declaration ctx' t n expr
+                    in
+                    return ctx' )
+                  (return {ctx with func_name; return_type})
+                  args func_param
+              in
+              let* ret_val, _ = exec_function func_finded (return ctx') in
+              return (return_type, ret_val, ctx) )
       | None ->
           fail
             (UnknownVariable ("Call undefined function with name - " ^ func_name)
             ) )
-    (* | Func_call (func_name, func_args) -> (
-        let rec get_name_args arg_list =
-          match arg_list with
-          | hd :: tail -> (
-            match hd with Arg (_, n) -> nfail
-              (UnknownVariable
-                 ("Call undefined function with name - " ^ func_name) ) ) :: get_name_args tail )
-          | [] ->
-              []
-        in
-        match find_necessary_func func_name ctx.functions with
+    (* (* | Func_call (func_name, func_args) -> (
+        match find_necessary_func func_name ctx.functions with *)
         | Some func_finded -> (
           match func_finded with
           | Func_def (Func_decl (return_type, func_name, args), _) ->
@@ -422,12 +435,24 @@ module Interpret (M : MONAD_ERROR) = struct
     | Stack_var var ->
         take_simple_type' var.var_type
 
-  and exec_statement (st : statement) ctx =
+  and exec_resolve_condition cnd_expr ctx =
+    let* _, cnd_val, ctx = exec_expression cnd_expr ctx in
+    let* bool_cnd_val = cast_val cnd_val ID_bool in
+    return bool_cnd_val
+
+  and exec_if_else cnd_expr if_st else_st ctx =
+    let* bool_cnd_val = exec_resolve_condition cnd_expr ctx in
+    match (bool_cnd_val, else_st) with
+    | I_Bool true, _ ->
+        fail Unreachable
+    | I_Bool false, Some else_st ->
+        fail Unreachable
+    | I_Bool false, None ->
+        return ctx
+    | _, _ -> fail Unreachable
+
+  and exec_statement st ctx =
     match st with
-    | Return expr ->
-        let* _, return_value, ctx = exec_expression expr ctx in
-        let* return_value = cast_val return_value ctx.return_type in
-        return {ctx with last_value= return_value; return_flag= true}
     | Var_decl (type_var, name, statement) -> (
       match statement with
       | Some (Expression expr) ->
@@ -437,6 +462,10 @@ module Interpret (M : MONAD_ERROR) = struct
           add_var_in_stack type_var default_value name ctx
       | _ ->
           fail NotImplemented )
+    | Return expr ->
+        let* _, return_value, ctx = exec_expression expr ctx in
+        let* return_value = cast_val return_value ctx.return_type in
+        return {ctx with last_value= return_value; return_flag= true}
     | Assign (expr_l, st) -> (
       match (st, expr_l) with
       | Expression expr_r, Var_name name ->
@@ -486,6 +515,12 @@ module Interpret (M : MONAD_ERROR) = struct
               fail Unreachable )
       | _ ->
           fail NotImplemented )
+    | Expression (Func_call (name, expr_list)) ->
+        let* _, _, ctx = exec_expression (Func_call (name, expr_list)) ctx in
+        return ctx
+    | If_else (cnd_expr, if_st, else_st) ->
+        exec_if_else cnd_expr if_st else_st ctx
+    | Compound st_list -> fail NotImplemented
     | _ ->
         fail NotImplemented
 
@@ -561,7 +596,7 @@ module Interpret (M : MONAD_ERROR) = struct
 
   and exec_declaration_pointer_var ctx type_var name expr =
     match expr with
-    | Func_call ("malloc", [expr]) ->
+    | Func_call ("malloc", [_]) ->
         fail NotImplemented
     | Func_call ("malloc", _) ->
         fail
@@ -718,3 +753,77 @@ let%expect_test _ =
       |}
   in
   [%expect {| 52 |}]
+
+let%expect_test _ =
+  let _ =
+    parse_and_run
+      {|
+        int32_t twix(int8_t x) {
+            return x + x + dima;
+        }
+        int sum(int32_t a, int8_t b) {
+            return twix(a) + twix(b);
+        }
+
+      int main() {
+        int32_t dima = 100;
+        int32_t count = sum(1, 2);
+        return count;
+      }
+      |}
+  in
+  [%expect {| 6 |}]
+
+let%expect_test _ =
+  let _ =
+    parse_and_run
+      {|
+        int change(int32_t *pointer_a) {
+            int32_t* pointer_a_2 = pointer_a;
+            *pointer_a_2 = 100;
+            return 0;
+        }
+
+      int main() {
+        int32_t a = 20;
+        change(&a);
+        return a;
+      }
+      |}
+  in
+  [%expect {| 100 |}]
+
+let%expect_test _ =
+  let _ =
+    parse_and_run
+      {|
+       int add_to_index(int number, int index, int* array) {
+         int32_t* p_array = array;
+         p_array[index] = array[index] + number;
+         return 0;
+         }
+
+       int main() {
+         int index = 1;
+         int32_t a[4] = {1, 2, 3, 4};
+         add_to_index(5, index, a);
+         return a[index];
+       }
+       |}
+  in
+  [%expect {| 7 |}]
+
+let%expect_test _ =
+  let _ =
+    parse_and_run
+      {|
+       int main() {
+         int index = 1;
+         if (index > 0) {
+            index = 10;
+         }
+         return 0;
+       }
+       |}
+  in
+  [%expect {| 7 |}]

@@ -78,8 +78,7 @@ type statement =
   | While of expr * statement
   | For of statement option * expr option * expr option * statement
     (** for (init?; cond?; upd?) { expr list } *)
-  | If of expr * statement
-  | If_else of expr * statement * statement
+  | If_else of expr * statement * statement option
   | Break
   | Continue
 [@@deriving show {with_path= false}]

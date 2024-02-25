@@ -141,69 +141,68 @@ module Interpret (M : MONAD_ERROR) = struct
 
   let rec exec_bin_op expr1 expr2 bin_op ctx =
     let* val1_type, val1, ctx = exec_expression expr1 ctx in
-    match (bin_op, val1) with
-    | And, I_Bool false ->
-        return (ID_bool, I_Bool false, ctx)
-    | Or, I_Bool true ->
-        return (ID_bool, I_Bool true, ctx)
+    let* bool_val1 = cast_val val1 ID_bool in
+    match bool_val1 with
+    | I_Bool bool_val1 ->
+        if bool_val1 = true && bin_op = Or then
+          return (ID_bool, I_Bool true, ctx)
+        else if bool_val1 = false && bin_op = And then
+          return (ID_bool, I_Bool false, ctx)
+        else
+          let* val2_type, val2, ctx = exec_expression expr2 ctx in
+          let* res =
+            match (bin_op, val1, val2) with
+            | Add, x, y ->
+                exec_int_arith_op x y Base.Int32.( + )
+            | Sub, x, y ->
+                exec_int_arith_op x y Base.Int32.( - )
+            | Mul, x, y ->
+                exec_int_arith_op x y Base.Int32.( * )
+            | Div, x, y ->
+                let* zero_exist = check_zero y in
+                if not zero_exist then exec_int_arith_op x y Base.Int32.( / )
+                else fail DivisionByZero
+            | Mod, x, y ->
+                let* zero_exist = check_zero y in
+                if not zero_exist then exec_int_arith_op x y Base.Int32.( % )
+                else fail DivisionByZero
+            | Lshift, x, y ->
+                exec_int_arith_op x y shift_left
+            | Rshift, x, y ->
+                exec_int_arith_op x y shift_right
+            | Less, x, y ->
+                exec_int_logical_op x y Base.Int32.( < )
+            | LessOrEqual, x, y ->
+                exec_int_logical_op x y Base.Int32.( <= )
+            | Grow, x, y ->
+                exec_int_logical_op x y Base.Int32.( > )
+            | GrowOrEqual, x, y ->
+                exec_int_logical_op x y Base.Int32.( >= )
+            | Equal, x, y ->
+                exec_int_logical_op x y Base.Int32.( = )
+            | NotEqual, x, y ->
+                exec_int_logical_op x y Base.Int32.( <> )
+            | Or, _, y -> (
+                let* y = cast_val y ID_int32 in
+                match y with
+                | I_Int32 y when y = 0l ->
+                    return (I_Bool false)
+                | _ ->
+                    return (I_Bool true) )
+            | And, _, y -> (
+                let* y = cast_val y ID_int32 in
+                match y with
+                | I_Int32 y when y = 1l ->
+                    return (I_Bool true)
+                | _ ->
+                    return (I_Bool false) )
+          in
+          let* necessary_type = relevant_type val1_type val2_type in
+          let* return_val = cast_val res necessary_type in
+          return (necessary_type, return_val, ctx)
     | _ ->
-        let* val2_type, val2, ctx = exec_expression expr2 ctx in
-        let* res =
-          match (bin_op, val1, val2) with
-          | Add, x, y ->
-              exec_int_arith_op x y Base.Int32.( + )
-          | Sub, x, y ->
-              exec_int_arith_op x y Base.Int32.( - )
-          | Mul, x, y ->
-              exec_int_arith_op x y Base.Int32.( * )
-          | Div, x, y ->
-              let* zero_exist = check_zero y in
-              if not zero_exist then exec_int_arith_op x y Base.Int32.( / )
-              else fail DivisionByZero
-          | Mod, x, y ->
-              let* zero_exist = check_zero y in
-              if not zero_exist then exec_int_arith_op x y Base.Int32.( % )
-              else fail DivisionByZero
-          | Lshift, x, y ->
-              exec_int_arith_op x y shift_left
-          | Rshift, x, y ->
-              exec_int_arith_op x y shift_right
-          | Less, x, y ->
-              exec_int_logical_op x y Base.Int32.( < )
-          | LessOrEqual, x, y ->
-              exec_int_logical_op x y Base.Int32.( <= )
-          | Grow, x, y ->
-              exec_int_logical_op x y Base.Int32.( > )
-          | GrowOrEqual, x, y ->
-              exec_int_logical_op x y Base.Int32.( >= )
-          | Equal, x, y ->
-              exec_int_logical_op x y Base.Int32.( = )
-          | NotEqual, x, y ->
-              exec_int_logical_op x y Base.Int32.( <> )
-          | Or, _, y -> (
-              let* y = cast_val y ID_int32 in
-              match y with
-              | I_Int32 y when y = 0l ->
-                  return (I_Bool true)
-              | _ ->
-                  return (I_Bool false) )
-          | And, _, y -> (
-              let* y = cast_val y ID_int32 in
-              match y with
-              | I_Int32 y when y = 1l ->
-                  return (I_Bool true)
-              | _ ->
-                  return (I_Bool false) )
-        in
-        let* necessary_type = relevant_type val1_type val2_type in
-        let* return_val = cast_val res necessary_type in
-        return (necessary_type, return_val, ctx)
+        fail Unreachable
 
-  (* | Sub, x, y ->
-     let* res = exec_bin_op' x y Base.Int32.( - ) in
-     let* grow_type = change_grow_type val1_type val2_type in
-     let* return_val = cast_val res grow_type in
-     return (grow_type, return_val, ctx) *)
   and take_var name ctx =
     match StringMap.find_opt name ctx.var_map with
     | Some x ->
@@ -225,6 +224,11 @@ module Interpret (M : MONAD_ERROR) = struct
           return (ID_int32, I_Int32 (Int32.of_int var.addr_in_stack), ctx)
       | None ->
           fail (UnknownVariable name) )
+    | Address, _ ->
+        fail
+          (InvalidFunctionCall
+             "the address can be taken only by the name of the previously \
+              declared variable" )
     | Dereference, Index (Var_name name, expr) ->
         fail NotImplemented
     | Dereference, Var_name name -> (
@@ -240,10 +244,26 @@ module Interpret (M : MONAD_ERROR) = struct
                 fail @@ InvalidFunctionCall "dereference only pointer" )
         | _ ->
             fail NotImplemented )
-    | _ ->
-        fail
-        @@ InvalidFunctionCall
-             "the address can only be taken from the variable name"
+    | Dereference, _ ->
+        fail NotImplemented
+    | Not, x ->
+        fail NotImplemented
+    | Plus, x -> (
+        let* t, v, ctx = exec_expression (Bin_expr (Add, x, x)) ctx in
+        let* v_int32 = cast_val v ID_int32 in
+        match v_int32 with
+        | I_Int32 v_int32 ->
+            if Int32.compare v_int32 0l >= 0 then
+              exec_expression (Bin_expr (Add, Const (V_int 0), x)) ctx
+            else exec_expression (Unary_expr (Minus, x)) ctx
+        | _ ->
+            fail Unreachable )
+    | Minus, x ->
+        exec_expression (Bin_expr (Sub, Const (V_int 0), x)) ctx
+    | Pref_increment, x ->
+        exec_expression (Bin_expr (Add, Const (V_int 1), x)) ctx
+    | Pref_decrement, x ->
+        exec_expression (Bin_expr (Sub, x, Const (V_int 1))) ctx
 
   and is_simple_type = function
     | Pointer _ ->
@@ -341,49 +361,6 @@ module Interpret (M : MONAD_ERROR) = struct
             fail
               (UnknownVariable
                  ("Call undefined function with name - " ^ func_name) ) )
-    (* (* | Func_call (func_name, func_args) -> (
-        match find_necessary_func func_name ctx.functions with *)
-        | Some func_finded -> (
-          match func_finded with
-          | Func_def (Func_decl (return_type, func_name, args), _) ->
-              let* ctx' =
-                List.fold_left2
-                  (fun ctx' argument expr ->
-                    let* ctx' = ctx' in
-                    let* ctx' =
-                      match argument with
-                      | Arg (t, n) ->
-                          exec_declaration t n (Some (Expression expr)) ctx'
-                    in
-                    return ctx' )
-                  (return {ctx with func_name; return_type})
-                  args func_args
-              in
-              let arg_names = get_name_args args in
-              let ctx' =
-                { ctx' with
-                  var_map=
-                    StringMap.filter
-                      (fun name _ ->
-                        List.exists (fun arg_name -> arg_name = name) arg_names
-                        )
-                      ctx'.var_map }
-              in
-              let* ret_val, ctx' = exec_function func_finded (return ctx') in
-              return (return_type, ret_val, ctx')
-          | _ ->
-              fail Unreachable )
-        | None ->
-            fail
-              (UnknownVariable
-                 ("Call undefined function with name - " ^ func_name) ) ) *)
-    (* | Var_name name -> (
-        let* variable = take_var name ctx.var_map in
-        match variable with
-        | {var_type= t; var_value= Some v; var_addr= -1} ->
-            return (t, v, ctx)
-        | _ ->
-            fail NotImplemented ) *)
     | _ ->
         fail NotImplemented
 
@@ -568,8 +545,10 @@ module Interpret (M : MONAD_ERROR) = struct
         exec_while cnd_expr st {ctx with in_loop= true}
     | For (init_st, cnd_expr, end_loop_expr, st_list) ->
         fail NotImplemented
-    | Break -> return {ctx with jump_state=Break true}
-    | Continue -> return {ctx with jump_state=Continue true}
+    | Break ->
+        return {ctx with jump_state= Break true}
+    | Continue ->
+        return {ctx with jump_state= Continue true}
     | _ ->
         fail NotImplemented
 
@@ -941,11 +920,10 @@ let%expect_test _ =
   in
   [%expect {| 126 |}]
 
-
 let%expect_test _ =
   let _ =
     parse_and_run
-    {|
+      {|
     int binarySearch(int a, int *array, int n) {
       int low = 0;
       int high = n - 1;
@@ -961,7 +939,6 @@ let%expect_test _ =
           }
         } 
         else {
-          return 333;
           return middle;
         } 
       }
@@ -970,8 +947,8 @@ let%expect_test _ =
     
     int main() {
       int arr[5] = {3, 7, 10, 23, 100};
-      return binarySearch(10, arr, 5);
+      return binarySearch(23, arr, 5);
     }
-    |};
+    |}
   in
-  [%expect {| 0 |}]
+  [%expect {| 3 |}]

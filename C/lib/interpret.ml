@@ -33,7 +33,8 @@ type context =
   ; free_byte_stack: int
   ; functions_list: program
   ; last_value: value
-  ; return_flag: bool }
+  ; jump_state: jmp_state
+  ; in_loop: bool }
 
 module Interpret (M : MONAD_ERROR) = struct
   open M
@@ -294,34 +295,52 @@ module Interpret (M : MONAD_ERROR) = struct
     | Index _ ->
         fail NotImplemented
     | Func_call (func_name, func_param) -> (
-      match find_necessary_func func_name ctx.functions_list with
-      | Some func_finded -> (
-        match func_finded with
-        | Func_decl (return_type, func_name, args, sts) ->
-            if List.length func_param <> List.length args then
-              fail
-                (InvalidFunctionCall
-                   "The function call does not match its signature" )
-            else
-              let* ctx' =
-                List.fold_left2
-                  (fun ctx' argument expr ->
-                    let* ctx' = ctx' in
-                    let* ctx' =
-                      match argument with
-                      | Arg (t, n) ->
-                          exec_declaration ctx' t n expr
-                    in
-                    return ctx' )
-                  (return {ctx with func_name; return_type})
-                  args func_param
-              in
-              let* ret_val, _ = exec_function func_finded (return ctx') in
-              return (return_type, ret_val, ctx) )
-      | None ->
-          fail
-            (UnknownVariable ("Call undefined function with name - " ^ func_name)
-            ) )
+        let rec get_name_args acc args =
+          match args with
+          | Arg (_, name) :: other ->
+              get_name_args (name :: acc) other
+          | [] ->
+              acc
+        in
+        match find_necessary_func func_name ctx.functions_list with
+        | Some func_finded -> (
+          match func_finded with
+          | Func_decl (return_type, func_name, args, sts) ->
+              if List.length func_param <> List.length args then
+                fail
+                  (InvalidFunctionCall
+                     "The function call does not match its signature" )
+              else
+                let* ctx' =
+                  List.fold_left2
+                    (fun ctx' argument expr ->
+                      let* ctx' = ctx' in
+                      let* ctx' =
+                        match argument with
+                        | Arg (t, n) ->
+                            exec_declaration ctx' t n expr
+                      in
+                      return ctx' )
+                    (return {ctx with func_name; return_type})
+                    args func_param
+                in
+                let arg_names = get_name_args [] args in
+                let ctx' =
+                  { ctx' with
+                    var_map=
+                      StringMap.filter
+                        (fun name _ ->
+                          List.exists
+                            (fun arg_name -> arg_name = name)
+                            arg_names )
+                        ctx'.var_map }
+                in
+                let* ret_val, _ = exec_function func_finded (return ctx') in
+                return (return_type, ret_val, ctx) )
+        | None ->
+            fail
+              (UnknownVariable
+                 ("Call undefined function with name - " ^ func_name) ) )
     (* (* | Func_call (func_name, func_args) -> (
         match find_necessary_func func_name ctx.functions with *)
         | Some func_finded -> (
@@ -444,12 +463,35 @@ module Interpret (M : MONAD_ERROR) = struct
     let* bool_cnd_val = exec_resolve_condition cnd_expr ctx in
     match (bool_cnd_val, else_st) with
     | I_Bool true, _ ->
-        fail Unreachable
+        exec_compound if_st (return ctx)
     | I_Bool false, Some else_st ->
-        fail Unreachable
+        exec_compound else_st (return ctx)
     | I_Bool false, None ->
         return ctx
-    | _, _ -> fail Unreachable
+    | _, _ ->
+        fail Unreachable
+
+  and exec_while cnd_expr st ctx =
+    let* bool_cnd_val = exec_resolve_condition cnd_expr ctx in
+    match bool_cnd_val with
+    | I_Bool true -> (
+      match ctx.jump_state with
+      | Return true ->
+          return {ctx with in_loop= false}
+      | Break true ->
+          return {ctx with jump_state= Return false}
+      | Continue true ->
+          let* ctx =
+            exec_compound st (return {ctx with jump_state= Continue false})
+          in
+          exec_while cnd_expr st ctx
+      | _ ->
+          let* ctx = exec_compound st (return ctx) in
+          exec_while cnd_expr st ctx )
+    | I_Bool false ->
+        return {ctx with in_loop= false}
+    | _ ->
+        fail Unreachable
 
   and exec_statement st ctx =
     match st with
@@ -465,7 +507,7 @@ module Interpret (M : MONAD_ERROR) = struct
     | Return expr ->
         let* _, return_value, ctx = exec_expression expr ctx in
         let* return_value = cast_val return_value ctx.return_type in
-        return {ctx with last_value= return_value; return_flag= true}
+        return {ctx with last_value= return_value; jump_state= Return true}
     | Assign (expr_l, st) -> (
       match (st, expr_l) with
       | Expression expr_r, Var_name name ->
@@ -520,7 +562,14 @@ module Interpret (M : MONAD_ERROR) = struct
         return ctx
     | If_else (cnd_expr, if_st, else_st) ->
         exec_if_else cnd_expr if_st else_st ctx
-    | Compound st_list -> fail NotImplemented
+    | Compound st_list ->
+        exec_compound (Compound st_list) (return ctx)
+    | While (cnd_expr, st) ->
+        exec_while cnd_expr st {ctx with in_loop= true}
+    | For (init_st, cnd_expr, end_loop_expr, st_list) ->
+        fail NotImplemented
+    | Break -> return {ctx with jump_state=Break true}
+    | Continue -> return {ctx with jump_state=Continue true}
     | _ ->
         fail NotImplemented
 
@@ -656,25 +705,39 @@ module Interpret (M : MONAD_ERROR) = struct
     | ID_uint32 | ID_uint16 | ID_uint8 | ID_float ->
         fail NotImplemented
 
+  and exec_compound st ctx =
+    match st with
+    | Compound st_list ->
+        let* ctx =
+          List.fold_left
+            (fun ctx st ->
+              let* ctx = ctx in
+              match ctx.jump_state with
+              | Return false | Break false | Continue false ->
+                  let* ctx = exec_statement st ctx in
+                  return ctx
+              | Return true ->
+                  return ctx
+              | Break true when ctx.in_loop = true ->
+                  return ctx
+              | Break true ->
+                  fail (CommandOutsideLoop "break")
+              | Continue true when ctx.in_loop = true ->
+                  return {ctx with jump_state= Return false}
+              | Continue true ->
+                  fail (CommandOutsideLoop "continue") )
+            ctx st_list
+        in
+        return ctx
+    | _ ->
+        fail Unreachable
+
   and exec_function func ctx =
     match func with
-    | Func_decl (return_type, _, _, body) -> (
-      match body with
-      | Compound sts ->
-          let* ctx =
-            List.fold_left
-              (fun ctx st ->
-                let* ctx = ctx in
-                if ctx.return_flag = true then return ctx
-                else
-                  let* ctx = exec_statement st ctx in
-                  return ctx )
-              ctx sts
-          in
-          cast_val ctx.last_value return_type
-          >>= fun last_value -> return (last_value, {ctx with last_value})
-      | _ ->
-          fail Unreachable )
+    | Func_decl (return_type, _, _, body) ->
+        let* ctx = exec_compound body ctx in
+        cast_val ctx.last_value return_type
+        >>= fun last_value -> return (last_value, {ctx with last_value})
 
   let exec_program program =
     match find_necessary_func "main" program with
@@ -687,8 +750,9 @@ module Interpret (M : MONAD_ERROR) = struct
              ; stack= Bytes.create 1024
              ; free_byte_stack= 0
              ; functions_list= program
-             ; return_flag= false
-             ; last_value= I_Null } )
+             ; jump_state= Return false
+             ; last_value= I_Null
+             ; in_loop= false } )
     | None ->
         fail @@ NoFunctionDeclaration "main"
 end
@@ -759,7 +823,7 @@ let%expect_test _ =
     parse_and_run
       {|
         int32_t twix(int8_t x) {
-            return x + x + dima;
+            return x + x;
         }
         int sum(int32_t a, int8_t b) {
             return twix(a) + twix(b);
@@ -818,12 +882,96 @@ let%expect_test _ =
     parse_and_run
       {|
        int main() {
-         int index = 1;
-         if (index > 0) {
-            index = 10;
-         }
-         return 0;
+        int index;
+        if (2 * 2 != 4) {
+            return 20;
+        } 
+        else {
+            return 30;
+        }
+        return 10;
        }
        |}
   in
-  [%expect {| 7 |}]
+  [%expect {| 30 |}]
+
+let%expect_test _ =
+  let _ =
+    parse_and_run
+      {|
+        int main() {
+        int32_t i = 0;
+        int32_t j;
+        int32_t sum = 0;
+        while (i < 10) {
+            j = 0;
+            while (j < 10) {
+                if (j == 5) {
+                    break;
+                }
+                sum = sum + 1;
+                j = j + 1;
+            }
+            if (i == 5) {
+                break;
+            }
+            i = i + 1;
+        }
+        return sum;
+        }
+       |}
+  in
+  [%expect {| 30 |}]
+
+let%expect_test _ =
+  let _ =
+    parse_and_run
+      {|
+        int factorial(int n) {
+            if (n == 0) {
+                return 1;
+            } else {
+                return n * factorial(n - 1);
+            }
+        }
+        int main() {
+            return factorial(5) + factorial(3);
+        }
+       |}
+  in
+  [%expect {| 126 |}]
+
+
+let%expect_test _ =
+  let _ =
+    parse_and_run
+    {|
+    int binarySearch(int a, int *array, int n) {
+      int low = 0;
+      int high = n - 1;
+      int middle;
+      while (low <= high) {
+        middle = (low + high) / 2;
+        if (a < array[middle] || a > array[middle]) {
+          if (a < array[middle]) {
+            high = middle - 1;
+          } 
+          else {
+            low = middle + 1;
+          }
+        } 
+        else {
+          return 333;
+          return middle;
+        } 
+      }
+      return -1;
+    }
+    
+    int main() {
+      int arr[5] = {3, 7, 10, 23, 100};
+      return binarySearch(10, arr, 5);
+    }
+    |};
+  in
+  [%expect {| 0 |}]

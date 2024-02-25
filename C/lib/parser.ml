@@ -517,21 +517,21 @@ let%expect_test "binary search" =
   pp pp_program p_programm
     {|
       int main() {
-        int32_t d = 20;
-        int32_t a = 10;
-        int* b = &a;
-        return *b;
+        for (int32_t i = 0; i < 10; ++i) {}
+        return 0;
       }
       |};
   [%expect
     {|
       [(Func_decl (ID_int32, "main", [],
           (Compound
-             [(Var_decl (ID_int32, "d", (Some (Expression (Const (V_int 20))))));
-               (Var_decl (ID_int32, "a", (Some (Expression (Const (V_int 10))))));
-               (Var_decl ((Pointer ID_int32), "b",
-                  (Some (Expression (Unary_expr (Address, (Var_name "a")))))));
-               (Return (Unary_expr (Dereference, (Var_name "b"))))])
+             [(For (
+                 (Some (Var_decl (ID_int32, "i",
+                          (Some (Expression (Const (V_int 0))))))),
+                 (Some (Bin_expr (Less, (Var_name "i"), (Const (V_int 10))))),
+                 (Some (Unary_expr (Pref_increment, (Var_name "i")))),
+                 (Compound [])));
+               (Return (Const (V_int 0)))])
           ))
         ] |}]
 

@@ -12,6 +12,7 @@ type value =
   | I_Null
 
 type error =
+  | CommandOutsideLoop of string
   | NoFunctionDeclaration of string
   | ArithmeticsError
   | UndefinedTypesConst
@@ -41,6 +42,8 @@ let pp_value fmt = function
       fprintf fmt "Null value"
 
 let pp_error fmt = function
+  | CommandOutsideLoop str ->
+      fprintf fmt "%s command is out of the loop" str
   | CheckValue value ->
       pp_value fmt value
   | InvalidFunctionCall str ->

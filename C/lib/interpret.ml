@@ -387,8 +387,9 @@ module Interpret (M : MONAD_ERROR) = struct
         return (I_Int8 (Int8.of_bytes_little_endian bts addr))
     | ID_char ->
         return (I_Char (Bytes.get bts addr))
-    | Pointer _ ->
-        return (I_Int32 (Int32.of_bytes_little_endian bts addr))
+    | Pointer t ->
+        get_value_in_bytes bts addr t
+        (* return (I_Int32 (Int32.of_bytes_little_endian bts addr)) *)
     | _ ->
         fail NotImplemented
 
@@ -518,6 +519,7 @@ module Interpret (M : MONAD_ERROR) = struct
           let* assign_value = cast_val assign_value (take_simple_type var) in
           let* bt = take_necassary_bytes ctx var in
           let* _, addr_pointer, ctx = exec_expression (Var_name name) ctx in
+          let* addr_pointer = cast_val addr_pointer ID_int32 in
           let* _, index_val, ctx = exec_expression x ctx in
           let* index_int32 = cast_val index_val ID_int32 in
           match (index_int32, addr_pointer) with
@@ -950,5 +952,25 @@ let%expect_test _ =
       return binarySearch(23, arr, 5);
     }
     |}
+  in
+  [%expect {| 3 |}]
+
+let%expect_test _ =
+  let _ =
+    parse_and_run
+      {|
+        int main() {
+            int8_t dst[4] = {0, 0, 0, 0};
+            int32_t source[1] = {197121};
+            int8_t* pointer_source = source;
+            int32_t i = 0;
+            while (i < 4) {
+                dst[i] = pointer_source[i];
+                i = i + 1;
+            }
+            
+            return dst[2];
+        }
+       |}
   in
   [%expect {| 3 |}]

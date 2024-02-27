@@ -4,37 +4,7 @@
 
 open Ast
 open Stdint
-open Format
 open InterpretTypes
-open String
-module StringMap = Map.Make (String)
-
-module type MONAD_ERROR = sig
-  include Base.Monad.S2
-
-  val fail : 'e -> ('a, 'e) t
-
-  val ( let* ) : ('a, 'e) t -> ('a -> ('b, 'e) t) -> ('b, 'e) t
-end
-
-type var_stack = {addr_in_stack: int; var_type: types}
-
-type var_malloc = {own_heap: Bytes.t; var_type: types}
-
-type variable = Stack_var of var_stack | Heap_var of var_malloc
-
-type jmp_state = Break of bool | Return of bool | Continue of bool
-
-type context =
-  { return_type: types
-  ; func_name: name
-  ; stack: Bytes.t
-  ; var_map: variable StringMap.t
-  ; free_byte_stack: int
-  ; functions_list: program
-  ; last_value: value
-  ; jump_state: jmp_state
-  ; in_loop: bool }
 
 module Interpret (M : MONAD_ERROR) = struct
   open M
@@ -49,11 +19,11 @@ module Interpret (M : MONAD_ERROR) = struct
     | V_char x ->
         return (ID_char, I_Char x, ctx)
     | V_float _ ->
-        fail NotImplemented
+        fail @@ NotImplemented "float number"
     | V_void ->
         return (ID_int32, I_Int32 0l, ctx)
     | V_null ->
-        fail NotImplemented
+        fail @@ NotImplemented "null value"
 
   let rec cast_val old_val new_type =
     match (old_val, new_type) with
@@ -153,7 +123,9 @@ module Interpret (M : MONAD_ERROR) = struct
     | Pointer t ->
         get_value_in_bytes bts addr t
     | _ ->
-        fail NotImplemented
+        fail
+        @@ NotImplemented
+             "get value into bytes does not support other value type"
 
   let is_simple_type = function
     | Pointer _ ->
@@ -170,6 +142,86 @@ module Interpret (M : MONAD_ERROR) = struct
   let take_heap_var var ctx =
     let* value = get_value_in_bytes var.own_heap 0 var.var_type in
     return (var.var_type, value, ctx)
+
+  let delete_var_in_heap name ctx =
+    return {ctx with var_map= StringMap.remove name ctx.var_map}
+
+  let set_value_to_bytes bts addr = function
+    | I_Int32 x ->
+        Bytes.set_int32_le bts addr x
+    | I_Int16 x ->
+        Bytes.set_int16_le bts addr @@ Int16.to_int x
+    | I_Int8 x ->
+        Bytes.set_int8 bts addr @@ Int8.to_int x
+    | I_Char x ->
+        Bytes.set bts addr x
+    | I_Bool x ->
+        Bytes.set_int8 bts addr @@ Bool.to_int x
+    | I_Null ->
+        ()
+
+  let rec get_size_type = function
+    | ID_int32 ->
+        4
+    | ID_int16 ->
+        2
+    | ID_int8 | ID_char ->
+        1
+    | Pointer t ->
+        get_size_type t
+    | Array (_, t) ->
+        get_size_type t
+    | _ ->
+        2048
+
+  let get_default_value = function
+    | ID_int8 ->
+        return (I_Int8 (Int8.of_int 0))
+    | ID_int16 ->
+        return (I_Int16 (Int16.of_int 0))
+    | ID_int32 ->
+        return (I_Int32 (Int32.of_int 0))
+    | ID_uint16 | ID_uint32 | ID_uint8 | ID_float | ID_void ->
+        fail
+        @@ NotImplemented
+             "ID_uint16 | ID_uint32 | ID_uint8 | ID_float | ID_void \
+              interpreting"
+    | ID_bool ->
+        return (I_Bool true)
+    | ID_char ->
+        return (I_Char (Base.Char.of_int_exn 0))
+    | Pointer _ ->
+        return (I_Int32 (Int32.of_int 0))
+    | Array _ ->
+        return (I_Int32 (Int32.of_int 0))
+
+  let take_simple_type var =
+    let rec take_simple_type' = function
+      | Pointer t ->
+          take_simple_type' t
+      | Array (_, t) ->
+          take_simple_type' t
+      | x ->
+          x
+    in
+    match var with
+    | Heap_var var ->
+        take_simple_type' var.var_type
+    | Stack_var var ->
+        take_simple_type' var.var_type
+
+  let add_var_in_stack type_var value name ctx =
+    if ctx.free_byte_stack + get_size_type type_var < 1024 then
+      let () = set_value_to_bytes ctx.stack ctx.free_byte_stack value in
+      return
+        { ctx with
+          var_map=
+            StringMap.add name
+              (Stack_var {addr_in_stack= ctx.free_byte_stack; var_type= type_var}
+              )
+              ctx.var_map
+        ; free_byte_stack= ctx.free_byte_stack + get_size_type type_var }
+    else fail StackOverflow
 
   let rec exec_bin_op expr1 expr2 bin_op ctx =
     let* val1_type, val1, ctx = exec_expression expr1 ctx in
@@ -275,7 +327,7 @@ module Interpret (M : MONAD_ERROR) = struct
           | _ ->
               fail @@ InvalidFunctionCall "dereference only pointer" ) )
     | Dereference, _ ->
-        fail NotImplemented
+        fail @@ NotImplemented "dereferance not index or variable name"
     | Not, x -> (
         let* t, v, ctx = exec_expression x ctx in
         let* is_zero = check_zero v in
@@ -301,7 +353,7 @@ module Interpret (M : MONAD_ERROR) = struct
     | Pref_decrement, x ->
         exec_expression (Bin_expr (Sub, x, Const (V_int 1))) ctx
 
-  and exec_expression expr ctx : (types * value * context, error) t =
+  and exec_expression expr ctx =
     match expr with
     | Bin_expr (bin_op, expr1, expr2) ->
         exec_bin_op expr1 expr2 bin_op ctx
@@ -310,7 +362,7 @@ module Interpret (M : MONAD_ERROR) = struct
     | Var_name x -> (
       match StringMap.find_opt x ctx.var_map with
       | Some (Heap_var var) ->
-          fail Unreachable
+          take_heap_var var ctx
       | Some (Stack_var var) ->
           take_stack_var var ctx
       | None ->
@@ -324,8 +376,18 @@ module Interpret (M : MONAD_ERROR) = struct
         let* _, addr_start, ctx = exec_expression (Var_name name) ctx in
         let* addr_start = cast_val addr_start ID_int32 in
         match (var, index_value, addr_start) with
-        | Heap_var _, I_Int32 index, I_Int32 addr_start ->
-            fail Unreachable
+        | Heap_var x, I_Int32 index, I_Int32 addr_start -> (
+          match x.var_type with
+          | Pointer t when is_simple_type t ->
+              let* return_value =
+                get_value_in_bytes x.own_heap
+                  ( Int32.to_int addr_start
+                  + (get_size_type t * Int32.to_int index) )
+                  t
+              in
+              return (t, return_value, ctx)
+          | _ ->
+              fail (InvalidFunctionCall "Only the index can be indexed") )
         | Stack_var x, I_Int32 index, I_Int32 addr_start -> (
           match x.var_type with
           | Pointer t when is_simple_type t ->
@@ -341,7 +403,40 @@ module Interpret (M : MONAD_ERROR) = struct
         | _ ->
             fail Unreachable )
     | Index _ ->
-        fail NotImplemented
+        fail @@ NotImplemented "Taking an index from a multidimensional case"
+    | Func_call ("sizeof", [expr]) -> (
+      match expr with
+      | Type t ->
+          return (ID_int32, I_Int32 (Int32.of_int (get_size_type t)), ctx)
+      | _ ->
+          fail
+          @@ InvalidFunctionCall
+               "sizeof can only be called for one parameter, which is the type"
+      )
+    | Func_call ("sizeof", _) ->
+        fail
+        @@ InvalidFunctionCall
+             "sizeof can only be called for one parameter, which is the type"
+    | Func_call ("free", [expr]) -> (
+      match expr with
+      | Var_name name -> (
+          let* var = take_var name ctx in
+          match var with
+          | Heap_var _ ->
+              let* ctx = delete_var_in_heap name ctx in
+              return (ID_int32, I_Int32 0l, ctx)
+          | Stack_var _ ->
+              fail
+              @@ InvalidFunctionCall
+                   "free can only work with the name of a variable on the heap"
+          )
+      | _ ->
+          fail
+          @@ InvalidFunctionCall
+               "free can only work with the name of a variable on the heap" )
+    | Func_call ("free", _) ->
+        fail
+        @@ InvalidFunctionCall "free() can only be called for one parameter"
     | Func_call (func_name, func_param) -> (
         let rec get_name_args acc args =
           match args with
@@ -353,7 +448,7 @@ module Interpret (M : MONAD_ERROR) = struct
         match find_necessary_func func_name ctx.functions_list with
         | Some func_finded -> (
           match func_finded with
-          | Func_decl (return_type, func_name, args, sts) ->
+          | Func_decl (return_type, func_name, args, _) ->
               if List.length func_param <> List.length args then
                 fail
                   (InvalidFunctionCall
@@ -386,25 +481,13 @@ module Interpret (M : MONAD_ERROR) = struct
                 let* ret_val, _ = exec_function func_finded (return ctx') in
                 return (return_type, ret_val, ctx) )
         | None ->
-            fail
-              (UnknownVariable
-                 ("Call undefined function with name - " ^ func_name) ) )
+            fail (UnknownFunction func_name) )
+    | Cast (t, expr) ->
+        let* _, return_value, ctx = exec_expression expr ctx in
+        let* return_value = cast_val return_value t in
+        return (t, return_value, ctx)
     | _ ->
-        fail NotImplemented
-
-  and set_value_to_bytes bts addr = function
-    | I_Int32 x ->
-        Bytes.set_int32_le bts addr x
-    | I_Int16 x ->
-        Bytes.set_int16_le bts addr @@ Int16.to_int x
-    | I_Int8 x ->
-        Bytes.set_int8 bts addr @@ Int8.to_int x
-    | I_Char x ->
-        Bytes.set bts addr x
-    | I_Bool x ->
-        Bytes.set_int8 bts addr @@ Bool.to_int x
-    | I_Null ->
-        ()
+        fail Unreachable
 
   and update_var name ctx value =
     match StringMap.find_opt name ctx.var_map with
@@ -427,21 +510,6 @@ module Interpret (M : MONAD_ERROR) = struct
     | Stack_var _ ->
         return ctx.stack
 
-  and take_simple_type (var : variable) =
-    let rec take_simple_type' = function
-      | Pointer t ->
-          take_simple_type' t
-      | Array (_, t) ->
-          take_simple_type' t
-      | x ->
-          x
-    in
-    match var with
-    | Heap_var var ->
-        take_simple_type' var.var_type
-    | Stack_var var ->
-        take_simple_type' var.var_type
-
   and exec_resolve_condition cnd_expr ctx =
     let* _, cnd_val, _ = exec_expression cnd_expr ctx in
     let* bool_cnd_val = cast_val cnd_val ID_bool in
@@ -458,6 +526,36 @@ module Interpret (M : MONAD_ERROR) = struct
         return ctx
     | _, _ ->
         fail Unreachable
+
+  and exec_for init_st cnd_expr end_loop_expr st ctx =
+    let* ctx =
+      match init_st with Some st -> exec_statement st ctx | None -> return ctx
+    in
+    let* bool_cnd_val =
+      match cnd_expr with
+      | Some cnd_expr -> (
+          let* cnd_val = exec_resolve_condition cnd_expr ctx in
+          match cnd_val with I_Bool x -> return x | _ -> fail Unreachable )
+      | _ ->
+          return true
+    in
+    if bool_cnd_val then
+      match ctx.jump_state with
+      | Return true ->
+          return {ctx with in_loop= false}
+      | Break true ->
+          return {ctx with jump_state= Return false}
+      | Continue true ->
+          let* ctx =
+            exec_compound st (return {ctx with jump_state= Continue false})
+          in
+          let* _, _, ctx = exec_expression end_loop_expr ctx in
+          exec_for None cnd_expr end_loop_expr st ctx
+      | _ ->
+          let* ctx = exec_compound st (return ctx) in
+          let* _, _, ctx = exec_expression end_loop_expr ctx in
+          exec_for None cnd_expr end_loop_expr st ctx
+    else return {ctx with in_loop= false; jump_state= Return false}
 
   and exec_while cnd_expr st ctx =
     let* bool_cnd_val = exec_resolve_condition cnd_expr ctx in
@@ -491,7 +589,7 @@ module Interpret (M : MONAD_ERROR) = struct
           let* default_value = get_default_value type_var in
           add_var_in_stack type_var default_value name ctx
       | _ ->
-          fail NotImplemented )
+          fail @@ NotImplemented "multiple assignment" )
     | Return expr ->
         let* _, return_value, ctx = exec_expression expr ctx in
         let* return_value = cast_val return_value ctx.return_type in
@@ -505,14 +603,19 @@ module Interpret (M : MONAD_ERROR) = struct
           let* _, r_expr_value, ctx = exec_expression expr_r ctx in
           take_var name ctx
           >>= function
-          | Heap_var x ->
-              fail NotImplemented
+          | Heap_var _ ->
+              fail
+              @@ NotImplemented
+                   "the architecture does not allow you to do this now"
           | Stack_var x -> (
             match x.var_type with
-            | Pointer t -> (
+            | Pointer t when is_simple_type t -> (
                 let* r_expr_value = cast_val r_expr_value t in
-                let* _, addres_in_stack, ctx = take_stack_var x ctx in
-                match addres_in_stack with
+                let* _, addr_in_stack, ctx =
+                  exec_expression (Var_name name) ctx
+                in
+                let* addr_in_stack = cast_val addr_in_stack ID_int32 in
+                match addr_in_stack with
                 | I_Int32 x ->
                     let () =
                       set_value_to_bytes ctx.stack (Int32.to_int x) r_expr_value
@@ -545,7 +648,7 @@ module Interpret (M : MONAD_ERROR) = struct
           | _ ->
               fail Unreachable )
       | _ ->
-          fail NotImplemented )
+          fail @@ NotImplemented "This type of assign" )
     | Expression (Func_call (name, expr_list)) ->
         let* _, _, ctx = exec_expression (Func_call (name, expr_list)) ctx in
         return ctx
@@ -557,8 +660,13 @@ module Interpret (M : MONAD_ERROR) = struct
         exec_compound (Compound st_list) (return ctx)
     | While (cnd_expr, st) ->
         exec_while cnd_expr st {ctx with in_loop= true}
-    | For (init_st, cnd_expr, end_loop_expr, st_list) ->
-        fail NotImplemented
+    | For (init_st, cnd_expr, end_loop_expr, st_list) -> (
+      match end_loop_expr with
+      | Some expr ->
+          exec_for init_st cnd_expr expr st_list {ctx with in_loop= true}
+      | None ->
+          exec_for init_st cnd_expr (Const (V_int 0)) st_list
+            {ctx with in_loop= true} )
     | Break ->
         return {ctx with jump_state= Break true}
     | Continue ->
@@ -579,51 +687,6 @@ module Interpret (M : MONAD_ERROR) = struct
     | _ ->
         fail Unreachable
 
-  and get_size_type = function
-    | ID_int32 ->
-        4
-    | ID_int16 ->
-        2
-    | ID_int8 | ID_char ->
-        1
-    | Pointer t ->
-        get_size_type t
-    | Array (_, t) ->
-        get_size_type t
-    | _ ->
-        2048
-
-  and add_var_in_stack type_var value name ctx =
-    if ctx.free_byte_stack + get_size_type type_var < 1024 then
-      let () = set_value_to_bytes ctx.stack ctx.free_byte_stack value in
-      return
-        { ctx with
-          var_map=
-            StringMap.add name
-              (Stack_var {addr_in_stack= ctx.free_byte_stack; var_type= type_var}
-              )
-              ctx.var_map
-        ; free_byte_stack= ctx.free_byte_stack + get_size_type type_var }
-    else fail StackOverflow
-
-  and get_default_value = function
-    | ID_int8 ->
-        return (I_Int8 (Int8.of_int 0))
-    | ID_int16 ->
-        return (I_Int16 (Int16.of_int 0))
-    | ID_int32 ->
-        return (I_Int32 (Int32.of_int 0))
-    | ID_uint16 | ID_uint32 | ID_uint8 | ID_float | ID_void ->
-        fail NotImplemented
-    | ID_bool ->
-        return (I_Bool true)
-    | ID_char ->
-        return (I_Char (Base.Char.of_int_exn 0))
-    | Pointer _ ->
-        return (I_Int32 (Int32.of_int 0))
-    | Array _ ->
-        return (I_Int32 (Int32.of_int 0))
-
   and exec_declaration_simple_var ctx type_var name expr =
     match expr with
     | Func_call ("malloc", _) ->
@@ -636,8 +699,9 @@ module Interpret (M : MONAD_ERROR) = struct
 
   and exec_declaration_pointer_var ctx type_var name expr =
     match expr with
-    | Func_call ("malloc", [_]) ->
-        fail NotImplemented
+    | Func_call ("malloc", [expr]) ->
+        let* _, return_value, ctx = exec_expression expr ctx in
+        add_var_in_heap type_var return_value name ctx
     | Func_call ("malloc", _) ->
         fail
         @@ InvalidFunctionCall
@@ -682,7 +746,7 @@ module Interpret (M : MONAD_ERROR) = struct
     | ID_bool | ID_int8 | ID_int16 | ID_int32 | ID_char ->
         exec_declaration_simple_var ctx type_var name expr
     | ID_void ->
-        fail UndefinedTypesConst
+        fail Unreachable
     | Pointer ID_bool
     | Pointer ID_int8
     | Pointer ID_int16
@@ -690,11 +754,11 @@ module Interpret (M : MONAD_ERROR) = struct
     | Pointer ID_char ->
         exec_declaration_pointer_var ctx type_var name expr
     | Pointer _ ->
-        fail NotImplemented
+        fail @@ NotImplemented "pointer declaration with not supported type"
     | Array (_, t) ->
         exec_declaration_array_var ctx t name expr
     | ID_uint32 | ID_uint16 | ID_uint8 | ID_float ->
-        fail NotImplemented
+        fail @@ NotImplemented "these types"
 
   and exec_compound st ctx =
     match st with
@@ -748,7 +812,7 @@ module Interpret (M : MONAD_ERROR) = struct
         in
         return return_value
     | None ->
-        fail @@ NoFunctionDeclaration "main"
+        fail @@ UnknownFunction "main"
 end
 
 module MONAD_RESULT = struct
@@ -758,24 +822,3 @@ module MONAD_RESULT = struct
 end
 
 module InterpreterResult = Interpret (MONAD_RESULT)
-
-let parse_and_run_print str =
-  match Parser.parse str with
-  | Ok parse_result -> (
-    match InterpreterResult.exec_program parse_result with
-    | Ok value ->
-        printf "%a" InterpretTypes.pp_value value
-    | Error err ->
-        printf "%a" InterpretTypes.pp_error err )
-  | Error _ ->
-      print_endline "Parsing Error!"
-
-let%expect_test _ =
-  let _ =
-    parse_and_run_print {|
-      int main() {
-        return 0;
-      }
-      |}
-  in
-  [%expect {| 0 |}]

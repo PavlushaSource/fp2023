@@ -1,7 +1,6 @@
 open Format
 open Stdint
-
-let check_types_equality left right = left = right
+open Ast
 
 type value =
   | I_Int32 of int32
@@ -13,19 +12,16 @@ type value =
 
 type error =
   | CommandOutsideLoop of string
-  | NoFunctionDeclaration of string
-  | ArithmeticsError
-  | UndefinedTypesConst
   | Unreachable
   | ReturnTypeMismatch of string
   | InvalidFunctionCall of string
-  | FuncHasNoBody of string
-  | NotImplemented
-  | ParsingFail
+  | NotImplemented of string
   | UnknownVariable of string
+  | UnknownFunction of string
   | DivisionByZero
   | StackOverflow
   | CheckValue of value
+  | CheckTypes of types
 
 let pp_value fmt = function
   | I_Int32 num ->
@@ -42,31 +38,54 @@ let pp_value fmt = function
       fprintf fmt "Null value"
 
 let pp_error fmt = function
-  | CommandOutsideLoop str ->
-      fprintf fmt "%s command is out of the loop" str
   | CheckValue value ->
       pp_value fmt value
+  | CheckTypes type_var ->
+      pp_types fmt type_var
+  | UnknownFunction str ->
+      fprintf fmt "Unknown function with name - %s" str
+  | CommandOutsideLoop str ->
+      fprintf fmt "%s command is out of the loop" str
   | InvalidFunctionCall str ->
       fprintf fmt "Invalid function call - %s" str
   | StackOverflow ->
       fprintf fmt "Stack overflow!"
   | Unreachable ->
       fprintf fmt "Unreachable"
-  | ArithmeticsError ->
-      fprintf fmt "Arith Error"
-  | UndefinedTypesConst ->
-      fprintf fmt "Const Error"
   | ReturnTypeMismatch str ->
       fprintf fmt "Return type uncorrect - %s" str
-  | FuncHasNoBody str ->
-      fprintf fmt "Function has no body - %s" str
-  | NotImplemented ->
-      fprintf fmt "Not implemented now!"
-  | ParsingFail ->
-      fprintf fmt "Parsing fail!"
+  | NotImplemented str ->
+      fprintf fmt "%s not implemented now" str
   | UnknownVariable str ->
       fprintf fmt "Unknown variable with name - %s" str
   | DivisionByZero ->
       fprintf fmt "Division by zero!"
-  | NoFunctionDeclaration str ->
-      fprintf fmt "Declaration function with name - %s miss" str
+
+module StringMap = Map.Make (String)
+
+module type MONAD_ERROR = sig
+  include Base.Monad.S2
+
+  val fail : 'e -> ('a, 'e) t
+
+  val ( let* ) : ('a, 'e) t -> ('a -> ('b, 'e) t) -> ('b, 'e) t
+end
+
+type var_stack = {addr_in_stack: int; var_type: types}
+
+type var_malloc = {own_heap: Bytes.t; var_type: types}
+
+type variable = Stack_var of var_stack | Heap_var of var_malloc
+
+type jmp_state = Break of bool | Return of bool | Continue of bool
+
+type context =
+  { return_type: types
+  ; func_name: name
+  ; stack: Bytes.t
+  ; var_map: variable StringMap.t
+  ; free_byte_stack: int
+  ; functions_list: program
+  ; last_value: value
+  ; jump_state: jmp_state
+  ; in_loop: bool }

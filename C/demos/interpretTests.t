@@ -99,3 +99,64 @@
   > }
   > EOF
   100
+
+  $ ./demoInterpret.exe << EOF
+  > int main() {
+  >   int32_t number;
+  >   int8_t* a = malloc(10 * sizeof(int8_t));
+  >   a[5] = 10;
+  >   number = a[5];
+  >   free(a);
+  >   return a[5];
+  > }
+  > EOF
+  Unknown variable with name - a
+
+  $ ./demoInterpret.exe << EOF
+  > int main() {
+  >   int32_t i;
+  >   int16_t a[5] = {0, 0, 0, 0, 0};
+  >   for (i = 0; i < 5;) {
+  >       a[i] = 5 - i;
+  >       i = i + 1;
+  >   }
+  >   return a[0];
+  > }
+  > EOF
+  5
+
+  $ ./demoInterpret.exe << EOF
+  > char main() {
+  >   int n = 1;
+  >   n = (n << 7) >> 1;
+  >   char A = n + 1;
+  >   if (!(A % 2 != 0) && A > 65) {
+  >     return 97;
+  >   } 
+  >   return A + 25;
+  > }
+  > EOF
+  Z
+
+  $ ./demoInterpret.exe << EOF
+  > int16_t main() {
+  >   int count = 0;
+  >   count = --(-(++(count + 2)));
+  >   return count;
+  > }
+  > EOF
+  -4
+
+  $ ./demoInterpret.exe << EOF
+  > int main() {
+  >   int16_t number = 333;
+  >   int16_t* pointer = &number;
+  >   int16_t* pointer_2 = pointer;
+  >   *pointer_2 = 666;
+  >   return number;
+  > }
+  > EOF
+  666
+
+
+

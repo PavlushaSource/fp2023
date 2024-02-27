@@ -131,3 +131,45 @@
             ])
        ))
     ]
+
+  $ ./demoParse.exe << EOF
+  > int main() {
+  >   float b = c = 10.2;
+  >   uint8_t aray[2][2][2] = {{{1, 2}, {3, 4}}, {{5, 6}, {7, 8}}};
+  >   return array[1][0][0];
+  > }
+  > EOF
+  [(Func_decl (ID_int32, "main", [],
+      (Compound
+         [(Var_decl (ID_float, "b",
+             (Some (Assign ((Var_name "c"), (Expression (Const (V_float 10.2)))
+                      )))
+             ));
+           (Var_decl (
+              (Array ((Some 2),
+                 (Array ((Some 2), (Array ((Some 2), ID_uint8)))))),
+              "aray",
+              (Some (Expression
+                       (Array_value
+                          [(Array_value
+                              [(Array_value
+                                  [(Const (V_int 1)); (Const (V_int 2))]);
+                                (Array_value
+                                   [(Const (V_int 3)); (Const (V_int 4))])
+                                ]);
+                            (Array_value
+                               [(Array_value
+                                   [(Const (V_int 5)); (Const (V_int 6))]);
+                                 (Array_value
+                                    [(Const (V_int 7)); (Const (V_int 8))])
+                                 ])
+                            ])))
+              ));
+           (Return
+              (Index (
+                 (Index ((Index ((Var_name "array"), (Const (V_int 1)))),
+                    (Const (V_int 0)))),
+                 (Const (V_int 0)))))
+           ])
+      ))
+    ]

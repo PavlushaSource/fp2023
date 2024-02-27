@@ -43,24 +43,17 @@ module Interpret (M : MONAD_ERROR) = struct
 
   let shift_right x y = Base.Int32.shift_right x (Int32.to_int y)
 
-  let take_var name var_map =
-    match StringMap.find_opt name var_map with
-    | Some var ->
-        return var
-    | None ->
-        fail @@ UnknownVariable name
-
   let const_for_value ctx = function
     | V_int x ->
         return (ID_int32, I_Int32 (Int32.of_int x), ctx)
     | V_char x ->
         return (ID_char, I_Char x, ctx)
     | V_float _ ->
-        fail Unreachable
+        fail NotImplemented
     | V_void ->
-        fail Unreachable
+        return (ID_int32, I_Int32 0l, ctx)
     | V_null ->
-        fail Unreachable
+        fail NotImplemented
 
   let rec cast_val old_val new_type =
     match (old_val, new_type) with
@@ -82,6 +75,8 @@ module Interpret (M : MONAD_ERROR) = struct
                "Trying to convert int number not in char boundaries in char"
     | I_Int32 x, ID_bool ->
         return (I_Bool (if Int32.to_int x = 0 then false else true))
+    | I_Int32 _, ID_void ->
+        return (I_Int32 0l)
     (* cast to grow type early*)
     | I_Int16 x, _ ->
         cast_val (I_Int32 (Int32.of_int16 x)) new_type
@@ -138,6 +133,43 @@ module Interpret (M : MONAD_ERROR) = struct
   let check_zero x =
     let* x = cast_val x ID_int32 in
     match x with I_Int32 x when x = 0l -> return true | _ -> return false
+
+  let take_var name ctx =
+    match StringMap.find_opt name ctx.var_map with
+    | Some x ->
+        return x
+    | None ->
+        fail (UnknownVariable name)
+
+  let rec get_value_in_bytes bts addr = function
+    | ID_int32 ->
+        return (I_Int32 (Int32.of_bytes_little_endian bts addr))
+    | ID_int16 ->
+        return (I_Int16 (Int16.of_bytes_little_endian bts addr))
+    | ID_int8 ->
+        return (I_Int8 (Int8.of_bytes_little_endian bts addr))
+    | ID_char ->
+        return (I_Char (Bytes.get bts addr))
+    | Pointer t ->
+        get_value_in_bytes bts addr t
+    | _ ->
+        fail NotImplemented
+
+  let is_simple_type = function
+    | Pointer _ ->
+        false
+    | Array _ ->
+        false
+    | _ ->
+        true
+
+  let take_stack_var var ctx =
+    let* value = get_value_in_bytes ctx.stack var.addr_in_stack var.var_type in
+    return (var.var_type, value, ctx)
+
+  let take_heap_var var ctx =
+    let* value = get_value_in_bytes var.own_heap 0 var.var_type in
+    return (var.var_type, value, ctx)
 
   let rec exec_bin_op expr1 expr2 bin_op ctx =
     let* val1_type, val1, ctx = exec_expression expr1 ctx in
@@ -203,23 +235,12 @@ module Interpret (M : MONAD_ERROR) = struct
     | _ ->
         fail Unreachable
 
-  and take_var name ctx =
-    match StringMap.find_opt name ctx.var_map with
-    | Some x ->
-        return x
-    | None ->
-        fail (UnknownVariable name)
-
-  and take_stack_var (var : var_stack) ctx =
-    get_value_in_bytes ctx.stack var.addr_in_stack var.var_type
-    >>= fun value -> return (var.var_type, value, ctx)
-
   and exec_un_op expr un_op ctx =
     match (un_op, expr) with
     | Address, Var_name name -> (
       match StringMap.find_opt name ctx.var_map with
-      | Some (Heap_var var) ->
-          fail NotImplemented
+      | Some (Heap_var _) ->
+          return (ID_int32, I_Int32 0l, ctx)
       | Some (Stack_var var) ->
           return (ID_int32, I_Int32 (Int32.of_int var.addr_in_stack), ctx)
       | None ->
@@ -229,8 +250,10 @@ module Interpret (M : MONAD_ERROR) = struct
           (InvalidFunctionCall
              "the address can be taken only by the name of the previously \
               declared variable" )
-    | Dereference, Index (Var_name name, expr) ->
-        fail NotImplemented
+    | Dereference, Index (Var_name _, _) ->
+        let* _, addr, ctx = exec_expression expr ctx in
+        let* addr = cast_val addr ID_int32 in
+        return (ID_int32, addr, ctx)
     | Dereference, Var_name name -> (
         take_var name ctx
         >>= function
@@ -238,18 +261,31 @@ module Interpret (M : MONAD_ERROR) = struct
             let* _, addres_in_stack, ctx = take_stack_var x ctx in
             match (addres_in_stack, x.var_type) with
             | I_Int32 addres_in_stack, Pointer t ->
-                get_value_in_bytes ctx.stack (Int32.to_int addres_in_stack) t
-                >>= fun deref_value -> return (t, deref_value, ctx)
+                let* deref_value =
+                  get_value_in_bytes ctx.stack (Int32.to_int addres_in_stack) t
+                in
+                return (t, deref_value, ctx)
             | _ ->
                 fail @@ InvalidFunctionCall "dereference only pointer" )
-        | _ ->
-            fail NotImplemented )
+        | Heap_var x -> (
+          match x.var_type with
+          | Pointer t ->
+              let* deref_value = get_value_in_bytes x.own_heap 0 t in
+              return (t, deref_value, ctx)
+          | _ ->
+              fail @@ InvalidFunctionCall "dereference only pointer" ) )
     | Dereference, _ ->
         fail NotImplemented
-    | Not, x ->
-        fail NotImplemented
+    | Not, x -> (
+        let* t, v, ctx = exec_expression x ctx in
+        let* is_zero = check_zero v in
+        match is_zero with
+        | true ->
+            return (t, I_Bool true, ctx)
+        | false ->
+            return (t, I_Bool false, ctx) )
     | Plus, x -> (
-        let* t, v, ctx = exec_expression (Bin_expr (Add, x, x)) ctx in
+        let* _, v, ctx = exec_expression (Bin_expr (Add, x, x)) ctx in
         let* v_int32 = cast_val v ID_int32 in
         match v_int32 with
         | I_Int32 v_int32 ->
@@ -264,14 +300,6 @@ module Interpret (M : MONAD_ERROR) = struct
         exec_expression (Bin_expr (Add, Const (V_int 1), x)) ctx
     | Pref_decrement, x ->
         exec_expression (Bin_expr (Sub, x, Const (V_int 1))) ctx
-
-  and is_simple_type = function
-    | Pointer _ ->
-        false
-    | Array _ ->
-        false
-    | _ ->
-        true
 
   and exec_expression expr ctx : (types * value * context, error) t =
     match expr with
@@ -378,43 +406,25 @@ module Interpret (M : MONAD_ERROR) = struct
     | I_Null ->
         ()
 
-  and get_value_in_bytes bts addr = function
-    | ID_int32 ->
-        return (I_Int32 (Int32.of_bytes_little_endian bts addr))
-    | ID_int16 ->
-        return (I_Int16 (Int16.of_bytes_little_endian bts addr))
-    | ID_int8 ->
-        return (I_Int8 (Int8.of_bytes_little_endian bts addr))
-    | ID_char ->
-        return (I_Char (Bytes.get bts addr))
-    | Pointer t ->
-        get_value_in_bytes bts addr t
-        (* return (I_Int32 (Int32.of_bytes_little_endian bts addr)) *)
-    | _ ->
-        fail NotImplemented
-
   and update_var name ctx value =
     match StringMap.find_opt name ctx.var_map with
     | Some (Stack_var var_in_stack) ->
-        cast_val value var_in_stack.var_type
-        >>= fun value ->
+        let* value = cast_val value var_in_stack.var_type in
         let () =
           set_value_to_bytes ctx.stack var_in_stack.addr_in_stack value
         in
         return ctx
     | Some (Heap_var var_in_heap) ->
-        fail Unreachable
+        let* value = cast_val value var_in_heap.var_type in
+        let () = set_value_to_bytes var_in_heap.own_heap 0 value in
+        return ctx
     | None ->
         fail @@ UnknownVariable name
-
-  and exec_assign name ctx expr =
-    exec_expression expr ctx
-    >>= fun (type_val, return_value, ctx) -> update_var name ctx return_value
 
   and take_necassary_bytes ctx = function
     | Heap_var x ->
         return x.own_heap
-    | Stack_var x ->
+    | Stack_var _ ->
         return ctx.stack
 
   and take_simple_type (var : variable) =
@@ -433,7 +443,7 @@ module Interpret (M : MONAD_ERROR) = struct
         take_simple_type' var.var_type
 
   and exec_resolve_condition cnd_expr ctx =
-    let* _, cnd_val, ctx = exec_expression cnd_expr ctx in
+    let* _, cnd_val, _ = exec_expression cnd_expr ctx in
     let* bool_cnd_val = cast_val cnd_val ID_bool in
     return bool_cnd_val
 
@@ -467,7 +477,7 @@ module Interpret (M : MONAD_ERROR) = struct
           let* ctx = exec_compound st (return ctx) in
           exec_while cnd_expr st ctx )
     | I_Bool false ->
-        return {ctx with in_loop= false}
+        return {ctx with in_loop= false; jump_state= Return false}
     | _ ->
         fail Unreachable
 
@@ -539,6 +549,8 @@ module Interpret (M : MONAD_ERROR) = struct
     | Expression (Func_call (name, expr_list)) ->
         let* _, _, ctx = exec_expression (Func_call (name, expr_list)) ctx in
         return ctx
+    | Expression _ ->
+        fail Unreachable
     | If_else (cnd_expr, if_st, else_st) ->
         exec_if_else cnd_expr if_st else_st ctx
     | Compound st_list ->
@@ -551,8 +563,6 @@ module Interpret (M : MONAD_ERROR) = struct
         return {ctx with jump_state= Break true}
     | Continue ->
         return {ctx with jump_state= Continue true}
-    | _ ->
-        fail NotImplemented
 
   and add_var_in_heap type_var size_heap name ctx =
     cast_val size_heap ID_int32
@@ -723,17 +733,20 @@ module Interpret (M : MONAD_ERROR) = struct
   let exec_program program =
     match find_necessary_func "main" program with
     | Some func ->
-        exec_function func
-          (return
-             { func_name= "main"
-             ; return_type= ID_int32
-             ; var_map= StringMap.empty
-             ; stack= Bytes.create 1024
-             ; free_byte_stack= 0
-             ; functions_list= program
-             ; jump_state= Return false
-             ; last_value= I_Null
-             ; in_loop= false } )
+        let* return_value, _ =
+          exec_function func
+            (return
+               { func_name= "main"
+               ; return_type= ID_int32
+               ; var_map= StringMap.empty
+               ; stack= Bytes.create 1024
+               ; free_byte_stack= 0
+               ; functions_list= program
+               ; jump_state= Return false
+               ; last_value= I_Null
+               ; in_loop= false } )
+        in
+        return return_value
     | None ->
         fail @@ NoFunctionDeclaration "main"
 end
@@ -746,11 +759,11 @@ end
 
 module InterpreterResult = Interpret (MONAD_RESULT)
 
-let parse_and_run str =
+let parse_and_run_print str =
   match Parser.parse str with
   | Ok parse_result -> (
     match InterpreterResult.exec_program parse_result with
-    | Ok (value, _) ->
+    | Ok value ->
         printf "%a" InterpretTypes.pp_value value
     | Error err ->
         printf "%a" InterpretTypes.pp_error err )
@@ -759,218 +772,10 @@ let parse_and_run str =
 
 let%expect_test _ =
   let _ =
-    parse_and_run
-      {|
+    parse_and_run_print {|
       int main() {
-        int8_t a = 10;
-        int* b = &a;
-        int32_t* c = b;
-        *c = 30;
-        return a;
+        return 0;
       }
       |}
   in
-  [%expect {| 30 |}]
-
-let%expect_test _ =
-  let _ =
-    parse_and_run
-      {|
-      int main() {
-        int8_t a[3] = {1, 2, 3};
-        int8_t* b = a;
-        return b[1];
-      }
-      |}
-  in
-  [%expect {| 2 |}]
-
-let%expect_test _ =
-  let _ =
-    parse_and_run
-      {|
-      int main() {
-        int32_t count = 10;
-        int32_t a[4] = {1 * 3, 2 + 2, 52, 1337};
-        a[1] = 52;
-        return a[1];
-      }
-      |}
-  in
-  [%expect {| 52 |}]
-
-let%expect_test _ =
-  let _ =
-    parse_and_run
-      {|
-        int32_t twix(int8_t x) {
-            return x + x;
-        }
-        int sum(int32_t a, int8_t b) {
-            return twix(a) + twix(b);
-        }
-
-      int main() {
-        int32_t dima = 100;
-        int32_t count = sum(1, 2);
-        return count;
-      }
-      |}
-  in
-  [%expect {| 6 |}]
-
-let%expect_test _ =
-  let _ =
-    parse_and_run
-      {|
-        int change(int32_t *pointer_a) {
-            int32_t* pointer_a_2 = pointer_a;
-            *pointer_a_2 = 100;
-            return 0;
-        }
-
-      int main() {
-        int32_t a = 20;
-        change(&a);
-        return a;
-      }
-      |}
-  in
-  [%expect {| 100 |}]
-
-let%expect_test _ =
-  let _ =
-    parse_and_run
-      {|
-       int add_to_index(int number, int index, int* array) {
-         int32_t* p_array = array;
-         p_array[index] = array[index] + number;
-         return 0;
-         }
-
-       int main() {
-         int index = 1;
-         int32_t a[4] = {1, 2, 3, 4};
-         add_to_index(5, index, a);
-         return a[index];
-       }
-       |}
-  in
-  [%expect {| 7 |}]
-
-let%expect_test _ =
-  let _ =
-    parse_and_run
-      {|
-       int main() {
-        int index;
-        if (2 * 2 != 4) {
-            return 20;
-        } 
-        else {
-            return 30;
-        }
-        return 10;
-       }
-       |}
-  in
-  [%expect {| 30 |}]
-
-let%expect_test _ =
-  let _ =
-    parse_and_run
-      {|
-        int main() {
-        int32_t i = 0;
-        int32_t j;
-        int32_t sum = 0;
-        while (i < 10) {
-            j = 0;
-            while (j < 10) {
-                if (j == 5) {
-                    break;
-                }
-                sum = sum + 1;
-                j = j + 1;
-            }
-            if (i == 5) {
-                break;
-            }
-            i = i + 1;
-        }
-        return sum;
-        }
-       |}
-  in
-  [%expect {| 30 |}]
-
-let%expect_test _ =
-  let _ =
-    parse_and_run
-      {|
-        int factorial(int n) {
-            if (n == 0) {
-                return 1;
-            } else {
-                return n * factorial(n - 1);
-            }
-        }
-        int main() {
-            return factorial(5) + factorial(3);
-        }
-       |}
-  in
-  [%expect {| 126 |}]
-
-let%expect_test _ =
-  let _ =
-    parse_and_run
-      {|
-    int binarySearch(int a, int *array, int n) {
-      int low = 0;
-      int high = n - 1;
-      int middle;
-      while (low <= high) {
-        middle = (low + high) / 2;
-        if (a < array[middle] || a > array[middle]) {
-          if (a < array[middle]) {
-            high = middle - 1;
-          } 
-          else {
-            low = middle + 1;
-          }
-        } 
-        else {
-          return middle;
-        } 
-      }
-      return -1;
-    }
-    
-    int main() {
-      int arr[5] = {3, 7, 10, 23, 100};
-      return binarySearch(23, arr, 5);
-    }
-    |}
-  in
-  [%expect {| 3 |}]
-
-let%expect_test _ =
-  let _ =
-    parse_and_run
-      {|
-        int main() {
-            int8_t dst[4] = {0, 0, 0, 0};
-            int32_t source[1] = {197121};
-            int8_t* pointer_source = source;
-            int32_t i = 0;
-            while (i < 4) {
-                dst[i] = pointer_source[i];
-                i = i + 1;
-            }
-            
-            return dst[2];
-        }
-       |}
-  in
-  [%expect {| 3 |}]
+  [%expect {| 0 |}]

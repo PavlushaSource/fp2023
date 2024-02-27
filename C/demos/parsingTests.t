@@ -1,4 +1,17 @@
-  $ dune exec demoFact
+  $ ./demoParse.exe << EOF
+  > int factorial(int n) {
+  >  if (n >= 1) {
+  >   return n * factorial(n - 1);
+  >  }
+  >  else {
+  >   return 1;
+  >  }
+  > }
+  > int main() { 
+  >  int n = 5;
+  >  return factorial(n);
+  > }
+  > EOF
   [(Func_decl (ID_int32, "factorial", [(Arg (ID_int32, "n"))],
       (Compound
          [(If_else (
@@ -21,7 +34,33 @@
        ))
     ]
 
-  $ dune exec demoBinarySearch
+  $ ./demoParse.exe << EOF
+  >  int binarySearch(int a, int *array, int n) {
+  >   int low = 0;
+  >   int high = n - 1;
+  >   int middle;
+  >   while (low <= high) {
+  >     middle = (low + high) / 2;
+  >     if (a < array[middle] || a > array[middle]) {
+  >       if (a < array[middle]) {
+  >         high = middle - 1;
+  >       } 
+  >       else {
+  >         low = middle + 1;
+  >       }
+  >     } 
+  >     else {
+  >       return middle;
+  >     } 
+  >   }
+  >   return -1;
+  > }
+  > 
+  > int main() {
+  >   int array[5] = {3, 7, 10, 23, 100};
+  >   return binarySearch(7, array, 5);
+  > }
+  > EOF
   [(Func_decl (ID_int32, "binarySearch",
       [(Arg (ID_int32, "a")); (Arg ((Pointer ID_int32), "array"));
         (Arg (ID_int32, "n"))],

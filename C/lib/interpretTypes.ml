@@ -1,3 +1,7 @@
+(** Copyright 2023-2024, PavlushaSource *)
+
+(** SPDX-License-Identifier: LGPL-3.0-or-later *)
+
 open Format
 open Stdint
 open Ast

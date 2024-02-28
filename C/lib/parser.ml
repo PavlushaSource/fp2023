@@ -510,6 +510,6 @@ let p_func_decl statements : func_decl t =
 
 let p_programm : program t =
   whitespace *> sep_by whitespace (p_func_decl p_statements)
-  >>= fun prog_ls -> return @@ prog_ls
+  >>= fun prog_ls -> return prog_ls
 
 let parse input = parse_string ~consume:All p_programm input

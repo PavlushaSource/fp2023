@@ -44,7 +44,7 @@ module Interpret (M : MONAD_ERROR) = struct
           @@ ReturnTypeMismatch
                "Trying to convert int number not in char boundaries in char"
     | I_Int32 x, ID_bool ->
-        return (I_Bool (if Int32.to_int x = 0 then false else true))
+        return (I_Bool (x <> 0l))
     | I_Int32 _, ID_void ->
         return (I_Int32 0l)
     (* cast to grow type early*)
@@ -438,50 +438,46 @@ module Interpret (M : MONAD_ERROR) = struct
         fail
         @@ InvalidFunctionCall "free() can only be called for one parameter"
     | Func_call (func_name, func_param) -> (
-        let rec get_name_args acc args =
-          match args with
-          | Arg (_, name) :: other ->
-              get_name_args (name :: acc) other
-          | [] ->
-              acc
-        in
-        match find_necessary_func func_name ctx.functions_list with
-        | Some func_finded -> (
-          match func_finded with
-          | Func_decl (return_type, func_name, args, _) ->
-              if List.length func_param <> List.length args then
-                fail
-                  (InvalidFunctionCall
-                     "The function call does not match its signature" )
-              else
-                let* ctx' =
-                  List.fold_left2
-                    (fun ctx' argument expr ->
-                      let* ctx' = ctx' in
-                      let* ctx' =
-                        match argument with
-                        | Arg (t, n) ->
-                            exec_declaration ctx' t n expr
-                      in
-                      return ctx' )
-                    (return {ctx with func_name; return_type})
-                    args func_param
-                in
-                let arg_names = get_name_args [] args in
-                let ctx' =
-                  { ctx' with
-                    var_map=
-                      StringMap.filter
-                        (fun name _ ->
-                          List.exists
-                            (fun arg_name -> arg_name = name)
-                            arg_names )
-                        ctx'.var_map }
-                in
-                let* ret_val, _ = exec_function func_finded (return ctx') in
-                return (return_type, ret_val, ctx) )
-        | None ->
-            fail (UnknownFunction func_name) )
+      match find_necessary_func func_name ctx.functions_list with
+      | Some func_finded -> (
+        match func_finded with
+        | Func_decl (return_type, func_name, args, _) ->
+            if List.length func_param <> List.length args then
+              fail
+                (InvalidFunctionCall
+                   "The function call does not match its signature" )
+            else
+              let* ctx' =
+                List.fold_left2
+                  (fun ctx' argument expr ->
+                    let* ctx' = ctx' in
+                    let* ctx' =
+                      match argument with
+                      | Arg (t, n) ->
+                          exec_declaration ctx' t n expr
+                    in
+                    return ctx' )
+                  (return {ctx with func_name; return_type})
+                  args func_param
+              in
+              let arg_names =
+                List.fold_left
+                  (fun acc -> function Arg (_, name) -> name :: acc)
+                  [] args
+              in
+              let ctx' =
+                { ctx' with
+                  var_map=
+                    StringMap.filter
+                      (fun name _ ->
+                        List.exists (fun arg_name -> arg_name = name) arg_names
+                        )
+                      ctx'.var_map }
+              in
+              let* ret_val, _ = exec_function func_finded (return ctx') in
+              return (return_type, ret_val, ctx) )
+      | None ->
+          fail (UnknownFunction func_name) )
     | Cast (t, expr) ->
         let* _, return_value, ctx = exec_expression expr ctx in
         let* return_value = cast_val return_value t in

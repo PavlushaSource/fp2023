@@ -24,8 +24,6 @@ type error =
   | UnknownFunction of string
   | DivisionByZero
   | StackOverflow
-  | CheckValue of value
-  | CheckTypes of types
 
 let pp_value fmt = function
   | I_Int32 num ->
@@ -42,10 +40,6 @@ let pp_value fmt = function
       fprintf fmt "Null value"
 
 let pp_error fmt = function
-  | CheckValue value ->
-      pp_value fmt value
-  | CheckTypes type_var ->
-      pp_types fmt type_var
   | UnknownFunction str ->
       fprintf fmt "Unknown function with name - %s" str
   | CommandOutsideLoop str ->

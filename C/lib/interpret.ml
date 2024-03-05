@@ -36,13 +36,8 @@ module Interpret (M : MONAD_ERROR) = struct
     | I_Int32 x, ID_int8 ->
         return (I_Int8 (Int8.of_int32 x))
     | I_Int32 x, ID_char ->
-        let new_x = Int32.to_int x in
-        if new_x <= 255 && new_x >= 0 then
-          return (I_Char (Base.Char.of_int_exn new_x))
-        else
-          fail
-          @@ ReturnTypeMismatch
-               "Trying to convert int number not in char boundaries in char"
+        let new_x = Int8.to_int (Int32.to_int8 x) in
+        return (I_Char (Base.Char.of_int_exn new_x))
     | I_Int32 x, ID_bool ->
         return (I_Bool (x <> 0l))
     | I_Int32 _, ID_void ->
@@ -102,7 +97,7 @@ module Interpret (M : MONAD_ERROR) = struct
 
   let check_zero x =
     let* x = cast_val x ID_int32 in
-    match x with I_Int32 x when x = 0l -> return true | _ -> return false
+    match x with I_Int32 x -> return (x = 0l) | _ -> return false
 
   let take_var name ctx =
     match StringMap.find_opt name ctx.var_map with
@@ -197,9 +192,7 @@ module Interpret (M : MONAD_ERROR) = struct
 
   let take_simple_type var =
     let rec take_simple_type' = function
-      | Pointer t ->
-          take_simple_type' t
-      | Array (_, t) ->
+      | Pointer t | Array (_, t) ->
           take_simple_type' t
       | x ->
           x
@@ -442,40 +435,41 @@ module Interpret (M : MONAD_ERROR) = struct
       | Some func_finded -> (
         match func_finded with
         | Func_decl (return_type, func_name, args, _) ->
-            if List.length func_param <> List.length args then
-              fail
-                (InvalidFunctionCall
-                   "The function call does not match its signature" )
-            else
-              let* ctx' =
-                List.fold_left2
-                  (fun ctx' argument expr ->
-                    let* ctx' = ctx' in
-                    let* ctx' =
-                      match argument with
-                      | Arg (t, n) ->
-                          exec_declaration ctx' t n expr
-                    in
-                    return ctx' )
-                  (return {ctx with func_name; return_type})
-                  args func_param
-              in
-              let arg_names =
-                List.fold_left
-                  (fun acc -> function Arg (_, name) -> name :: acc)
-                  [] args
-              in
-              let ctx' =
-                { ctx' with
-                  var_map=
-                    StringMap.filter
-                      (fun name _ ->
-                        List.exists (fun arg_name -> arg_name = name) arg_names
-                        )
-                      ctx'.var_map }
-              in
-              let* ret_val, _ = exec_function func_finded (return ctx') in
-              return (return_type, ret_val, ctx) )
+            let* () =
+              if List.length func_param <> List.length args then
+                fail
+                  (InvalidFunctionCall
+                     "The function call does not match its signature" )
+              else return ()
+            in
+            let* ctx' =
+              List.fold_left2
+                (fun ctx' argument expr ->
+                  let* ctx' = ctx' in
+                  let* ctx' =
+                    match argument with
+                    | Arg (t, n) ->
+                        exec_declaration ctx' t n expr
+                  in
+                  return ctx' )
+                (return {ctx with func_name; return_type})
+                args func_param
+            in
+            let arg_names =
+              List.fold_left
+                (fun acc -> function Arg (_, name) -> name :: acc)
+                [] args
+            in
+            let ctx' =
+              { ctx' with
+                var_map=
+                  StringMap.filter
+                    (fun name _ ->
+                      List.exists (fun arg_name -> arg_name = name) arg_names )
+                    ctx'.var_map }
+            in
+            let* ret_val, _ = exec_function func_finded (return ctx') in
+            return (return_type, ret_val, ctx) )
       | None ->
           fail (UnknownFunction func_name) )
     | Cast (t, expr) ->
@@ -764,9 +758,6 @@ module Interpret (M : MONAD_ERROR) = struct
             (fun ctx st ->
               let* ctx = ctx in
               match ctx.jump_state with
-              | Return false | Break false | Continue false ->
-                  let* ctx = exec_statement st ctx in
-                  return ctx
               | Return true ->
                   return ctx
               | Break true when ctx.in_loop = true ->
@@ -776,7 +767,9 @@ module Interpret (M : MONAD_ERROR) = struct
               | Continue true when ctx.in_loop = true ->
                   return {ctx with jump_state= Return false}
               | Continue true ->
-                  fail (CommandOutsideLoop "continue") )
+                  fail (CommandOutsideLoop "continue")
+              | _ ->
+                  exec_statement st ctx )
             ctx st_list
         in
         return ctx

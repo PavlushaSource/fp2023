@@ -158,5 +158,14 @@
   > EOF
   666
 
+  $ ./demoInterpret.exe << EOF
+  > int overflowMe(int n) {
+  >   return overflowMe(n + 1);
+  > }
+  > 
+  > int main() {
+  >   return overflowMe(0);
+  > }
+  Stack overflow!
 
 

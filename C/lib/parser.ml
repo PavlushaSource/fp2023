@@ -193,7 +193,7 @@ let p_index_array expr =
 
 let var_name = (fun c -> Var_name c) <$> whitespace *> p_ident
 
-let null = token "NULL" *> (return @@ V_null)
+let null = token "NULL" *> return V_null
 
 let p_const : expr t = p_number <|> p_char <|> null >>| fun c -> Const c
 
